@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    bassical_temp_lib::run()
+    bassical_lib::run()
 }
