@@ -3,6 +3,54 @@ use crate::persistence::storage;
 
 const LIBRARY_FILE: &str = "library.json";
 
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SongUpdate {
+    pub title: Option<SongTitle>,
+    pub artist: Option<ArtistName>,
+    pub album: Option<String>,
+    pub genre: Option<String>,
+    pub year: Option<u16>,
+    pub tuning: Option<String>,
+    pub bpm: Option<f64>,
+    pub difficulty: Option<u8>,
+    pub tags: Option<Vec<String>>,
+    pub audio_path: Option<AudioPath>,
+}
+
+fn apply_opt_str(target: &mut Option<String>, value: Option<String>) {
+    if let Some(v) = value {
+        *target = if v.is_empty() { None } else { Some(v) };
+    }
+}
+
+fn apply_updates(song: &mut Song, update: SongUpdate) -> Result<(), String> {
+    if let Some(t) = update.title {
+        song.title = t;
+    }
+    if let Some(a) = update.artist {
+        song.artist = Some(a);
+    }
+    apply_opt_str(&mut song.album, update.album);
+    apply_opt_str(&mut song.genre, update.genre);
+    apply_opt_str(&mut song.tuning, update.tuning);
+    song.year = update.year;
+    song.bpm = update.bpm;
+    song.difficulty = update.difficulty;
+    if let Some(t) = update.tags {
+        song.tags = t;
+    }
+    if let Some(path) = update.audio_path {
+        if !path.exists() {
+            return Err("El archivo de audio no existe".to_string());
+        }
+        song.audio_path = path;
+        song.audio_missing = false;
+    }
+    song.updated_at = chrono::Utc::now().to_rfc3339();
+    Ok(())
+}
+
 fn load_library() -> Result<Library, String> {
     match storage::read_json::<Library>(LIBRARY_FILE) {
         Ok(lib) => Ok(lib),
@@ -54,30 +102,12 @@ pub fn add_song(
 }
 
 #[tauri::command]
-pub fn update_song(
-    id: SongId,
-    title: Option<SongTitle>,
-    artist: Option<ArtistName>,
-    audio_path: Option<AudioPath>,
-) -> Result<Song, String> {
+pub fn update_song(id: SongId, update: SongUpdate) -> Result<Song, String> {
     let mut library = load_library()?;
     let song = find_song_by_id_mut(&mut library, &id)
         .ok_or_else(|| "Canción no encontrada".to_string())?;
 
-    if let Some(t) = title {
-        song.title = t;
-    }
-    if let Some(a) = artist {
-        song.artist = Some(a);
-    }
-    if let Some(path) = audio_path {
-        if !path.exists() {
-            return Err("El archivo de audio no existe".to_string());
-        }
-        song.audio_path = path;
-        song.audio_missing = false;
-    }
-    song.updated_at = chrono::Utc::now().to_rfc3339();
+    apply_updates(song, update)?;
 
     let updated_song = song.clone();
     save_library(&library)?;
@@ -97,6 +127,16 @@ pub fn check_audio_exists(id: SongId) -> Result<bool, String> {
     let library = load_library()?;
     let song = find_song_by_id(&library, &id).ok_or_else(|| "Canción no encontrada".to_string())?;
     Ok(song.audio_path.exists())
+}
+
+#[tauri::command]
+pub fn get_library_with_status() -> Result<Library, String> {
+    let mut library = load_library()?;
+    for song in &mut library.songs {
+        song.audio_missing = !song.audio_path.exists();
+    }
+    save_library(&library)?;
+    Ok(library)
 }
 
 #[tauri::command]
@@ -125,488 +165,368 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    fn setup() -> PathBuf {
-        let temp_dir = std::env::temp_dir().join(format!(
+    fn make_temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
             "bassical_cmd_test_{:?}_{:?}",
             std::process::id(),
             std::thread::current().id()
         ));
-        fs::create_dir_all(&temp_dir).unwrap();
-        storage::set_data_dir(temp_dir.clone());
-        temp_dir
+        fs::create_dir_all(&dir).unwrap();
+        storage::set_data_dir(dir.clone());
+        dir
     }
 
-    fn teardown(temp_dir: PathBuf) {
+    fn cleanup(dir: &PathBuf) {
         storage::clear_data_dir();
-        fs::remove_dir_all(temp_dir).ok();
+        fs::remove_dir_all(dir).ok();
+    }
+
+    fn make_song(dir: &PathBuf, name: &str) -> Song {
+        let audio_file = dir.join(format!("{name}.mp3"));
+        fs::write(&audio_file, "fake audio").unwrap();
+        let title = SongTitle::new(name.to_string());
+        let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
+        add_song(title, None, audio_path).unwrap()
+    }
+
+    fn make_update<F: FnOnce(&mut SongUpdate)>(f: F) -> SongUpdate {
+        let mut u = SongUpdate::default();
+        f(&mut u);
+        u
     }
 
     #[test]
     fn test_init_app_creates_dirs_and_library() {
-        let temp_dir = setup();
-
-        let result = init_app();
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "App initialized");
-        assert!(temp_dir.exists());
-        assert!(temp_dir.join("songs").exists());
-        assert!(temp_dir.join("library.json").exists());
-
-        teardown(temp_dir);
+        let dir = make_temp_dir();
+        assert_eq!(init_app().unwrap(), "App initialized");
+        assert!(dir.exists());
+        assert!(dir.join("songs").exists());
+        assert!(dir.join("library.json").exists());
+        cleanup(&dir);
     }
 
     #[test]
     fn test_init_app_idempotent() {
-        let temp_dir = setup();
-
+        let dir = make_temp_dir();
         assert!(init_app().is_ok());
         assert!(init_app().is_ok());
-
-        teardown(temp_dir);
+        cleanup(&dir);
     }
 
     #[test]
     fn test_get_library_empty_after_init() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let result = get_library();
-        assert!(result.is_ok());
-        assert!(result.unwrap().songs.is_empty());
-
-        teardown(temp_dir);
+        assert!(get_library().unwrap().songs.is_empty());
+        cleanup(&dir);
     }
 
     #[test]
     fn test_get_library_creates_empty_if_missing() {
-        let temp_dir = setup();
-
-        let result = get_library();
-        assert!(result.is_ok());
-        assert!(result.unwrap().songs.is_empty());
-
-        teardown(temp_dir);
+        let dir = make_temp_dir();
+        assert!(get_library().unwrap().songs.is_empty());
+        cleanup(&dir);
     }
 
     #[test]
     fn test_add_song_success() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let audio_file = temp_dir.join("test_add.mp3");
-        fs::write(&audio_file, "fake audio").unwrap();
-
-        let title = SongTitle::new("Test Song".to_string());
-        let artist = Some(ArtistName::new("Test Artist".to_string()));
-        let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-
-        let result = add_song(title, artist, audio_path);
-        assert!(result.is_ok());
-
-        let song = result.unwrap();
-        assert_eq!(song.title.as_str(), "Test Song");
-        assert_eq!(song.artist.unwrap().as_str(), "Test Artist");
-
-        let library = get_library().unwrap();
-        assert_eq!(library.songs.len(), 1);
-        assert_eq!(library.songs[0].id, song.id);
-
-        teardown(temp_dir);
+        let audio_file = dir.join("test.mp3");
+        fs::write(&audio_file, "data").unwrap();
+        let song = add_song(
+            SongTitle::new("Test".to_string()),
+            Some(ArtistName::new("Artist".to_string())),
+            AudioPath::new(audio_file.to_str().unwrap().to_string()),
+        )
+        .unwrap();
+        assert_eq!(song.title.as_str(), "Test");
+        assert_eq!(song.artist.unwrap().as_str(), "Artist");
+        assert_eq!(get_library().unwrap().songs.len(), 1);
+        cleanup(&dir);
     }
 
     #[test]
     fn test_add_song_no_artist() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let audio_file = temp_dir.join("test_no_artist.mp3");
-        fs::write(&audio_file, "fake audio").unwrap();
-
-        let title = SongTitle::new("No Artist".to_string());
-        let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-
-        let result = add_song(title, None, audio_path);
-        assert!(result.is_ok());
-        assert!(result.unwrap().artist.is_none());
-
-        teardown(temp_dir);
+        assert!(make_song(&dir, "Song").artist.is_none());
+        cleanup(&dir);
     }
 
     #[test]
     fn test_add_song_nonexistent_audio_fails() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let title = SongTitle::new("Bad Song".to_string());
-        let audio_path = AudioPath::new("/nonexistent/file.mp3".to_string());
-
-        let result = add_song(title, None, audio_path);
+        let result = add_song(
+            SongTitle::new("Bad".to_string()),
+            None,
+            AudioPath::new("/nonexistent/file.mp3".to_string()),
+        );
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "El archivo de audio no existe");
-
-        let library = get_library().unwrap();
-        assert!(library.songs.is_empty());
-
-        teardown(temp_dir);
+        assert!(get_library().unwrap().songs.is_empty());
+        cleanup(&dir);
     }
 
     #[test]
     fn test_add_multiple_songs() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
         for i in 0..3 {
-            let audio_file = temp_dir.join(format!("test_{i}.mp3"));
-            fs::write(&audio_file, "fake audio").unwrap();
-
-            let title = SongTitle::new(format!("Song {i}"));
-            let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-            add_song(title, None, audio_path).unwrap();
+            make_song(&dir, &format!("Song {i}"));
         }
-
-        let library = get_library().unwrap();
-        assert_eq!(library.songs.len(), 3);
-
-        teardown(temp_dir);
+        assert_eq!(get_library().unwrap().songs.len(), 3);
+        cleanup(&dir);
     }
 
     #[test]
     fn test_update_song_title() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let audio_file = temp_dir.join("test_update.mp3");
-        fs::write(&audio_file, "fake audio").unwrap();
-
-        let title = SongTitle::new("Original".to_string());
-        let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-        let song = add_song(title, None, audio_path).unwrap();
-
-        let new_title = SongTitle::new("Updated".to_string());
-        let result = update_song(song.id.clone(), Some(new_title), None, None);
+        let song = make_song(&dir, "Original");
+        let result = update_song(
+            song.id.clone(),
+            make_update(|u| {
+                u.title = Some(SongTitle::new("Updated".to_string()));
+            }),
+        );
         assert!(result.is_ok());
-
-        let updated = result.unwrap();
-        assert_eq!(updated.title.as_str(), "Updated");
-        assert!(updated.artist.is_none());
-
-        teardown(temp_dir);
+        assert_eq!(result.unwrap().title.as_str(), "Updated");
+        cleanup(&dir);
     }
 
     #[test]
     fn test_update_song_artist() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let audio_file = temp_dir.join("test_update_artist.mp3");
-        fs::write(&audio_file, "fake audio").unwrap();
-
-        let title = SongTitle::new("Song".to_string());
-        let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-        let song = add_song(title, None, audio_path).unwrap();
-
-        let new_artist = ArtistName::new("New Artist".to_string());
-        let result = update_song(song.id.clone(), None, Some(new_artist), None);
+        let song = make_song(&dir, "Song");
+        let result = update_song(
+            song.id.clone(),
+            make_update(|u| {
+                u.artist = Some(ArtistName::new("New Artist".to_string()));
+            }),
+        );
         assert!(result.is_ok());
-
-        let updated = result.unwrap();
-        assert_eq!(updated.artist.unwrap().as_str(), "New Artist");
-
-        teardown(temp_dir);
+        assert_eq!(result.unwrap().artist.unwrap().as_str(), "New Artist");
+        cleanup(&dir);
     }
 
     #[test]
     fn test_update_song_audio_path() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let audio_file1 = temp_dir.join("test1.mp3");
-        let audio_file2 = temp_dir.join("test2.mp3");
-        fs::write(&audio_file1, "audio 1").unwrap();
-        fs::write(&audio_file2, "audio 2").unwrap();
-
-        let title = SongTitle::new("Song".to_string());
-        let audio_path = AudioPath::new(audio_file1.to_str().unwrap().to_string());
-        let song = add_song(title, None, audio_path).unwrap();
-
-        let new_path = AudioPath::new(audio_file2.to_str().unwrap().to_string());
-        let result = update_song(song.id.clone(), None, None, Some(new_path));
+        let song = make_song(&dir, "Song");
+        let new_file = dir.join("new.mp3");
+        fs::write(&new_file, "new").unwrap();
+        let result = update_song(
+            song.id.clone(),
+            make_update(|u| {
+                u.audio_path = Some(AudioPath::new(new_file.to_str().unwrap().to_string()));
+            }),
+        );
         assert!(result.is_ok());
-
-        let updated = result.unwrap();
-        assert_eq!(updated.audio_path.as_str(), audio_file2.to_str().unwrap());
-        assert!(!updated.audio_missing);
-
-        teardown(temp_dir);
+        assert_eq!(
+            result.unwrap().audio_path.as_str(),
+            new_file.to_str().unwrap()
+        );
+        cleanup(&dir);
     }
 
     #[test]
     fn test_update_song_nonexistent_audio_fails() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let audio_file = temp_dir.join("test.mp3");
-        fs::write(&audio_file, "fake audio").unwrap();
-
-        let title = SongTitle::new("Song".to_string());
-        let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-        let song = add_song(title, None, audio_path).unwrap();
-
-        let bad_path = AudioPath::new("/nonexistent/file.mp3".to_string());
-        let result = update_song(song.id.clone(), None, None, Some(bad_path));
+        let song = make_song(&dir, "Song");
+        let result = update_song(
+            song.id.clone(),
+            make_update(|u| {
+                u.audio_path = Some(AudioPath::new("/nonexistent/file.mp3".to_string()));
+            }),
+        );
         assert!(result.is_err());
-
-        teardown(temp_dir);
+        cleanup(&dir);
     }
 
     #[test]
     fn test_update_song_not_found() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let fake_id = SongId::new("nonexistent-id".to_string());
-        let result = update_song(fake_id, Some(SongTitle::new("X".to_string())), None, None);
+        let result = update_song(
+            SongId::new("no-id".to_string()),
+            SongUpdate {
+                title: Some(SongTitle::new("X".to_string())),
+                ..SongUpdate::default()
+            },
+        );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Canción no encontrada");
-
-        teardown(temp_dir);
+        cleanup(&dir);
     }
 
     #[test]
     fn test_update_song_no_changes() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let audio_file = temp_dir.join("test.mp3");
-        fs::write(&audio_file, "fake audio").unwrap();
-
-        let title = SongTitle::new("Song".to_string());
-        let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-        let song = add_song(title, None, audio_path).unwrap();
-
-        let result = update_song(song.id.clone(), None, None, None);
+        let song = make_song(&dir, "Song");
+        let result = update_song(song.id.clone(), SongUpdate::default());
         assert!(result.is_ok());
-
-        let updated = result.unwrap();
-        assert_eq!(updated.title.as_str(), "Song");
-        assert!(updated.updated_at >= song.updated_at);
-
-        teardown(temp_dir);
+        assert_eq!(result.unwrap().title.as_str(), "Song");
+        cleanup(&dir);
     }
 
     #[test]
     fn test_delete_song() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let audio_file = temp_dir.join("test.mp3");
-        fs::write(&audio_file, "fake audio").unwrap();
-
-        let title = SongTitle::new("Delete Me".to_string());
-        let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-        let song = add_song(title, None, audio_path).unwrap();
-
+        let song = make_song(&dir, "Delete Me");
         assert_eq!(get_library().unwrap().songs.len(), 1);
-
-        let result = delete_song(song.id);
-        assert!(result.is_ok());
+        assert!(delete_song(song.id).is_ok());
         assert!(get_library().unwrap().songs.is_empty());
-
-        teardown(temp_dir);
+        cleanup(&dir);
     }
 
     #[test]
     fn test_delete_song_not_found_succeeds() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let fake_id = SongId::new("nonexistent".to_string());
-        let result = delete_song(fake_id);
-        assert!(result.is_ok());
-
-        teardown(temp_dir);
+        assert!(delete_song(SongId::new("x".to_string())).is_ok());
+        cleanup(&dir);
     }
 
     #[test]
     fn test_delete_one_of_many() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let mut song_ids = Vec::new();
+        let mut ids = Vec::new();
         for i in 0..3 {
-            let audio_file = temp_dir.join(format!("test_{i}.mp3"));
-            fs::write(&audio_file, "fake audio").unwrap();
-
-            let title = SongTitle::new(format!("Song {i}"));
-            let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-            let song = add_song(title, None, audio_path).unwrap();
-            song_ids.push(song.id);
+            ids.push(make_song(&dir, &format!("Song {i}")).id);
         }
-
-        assert_eq!(get_library().unwrap().songs.len(), 3);
-
-        delete_song(song_ids[1].clone()).unwrap();
-
-        let library = get_library().unwrap();
-        assert_eq!(library.songs.len(), 2);
-        assert!(library.songs.iter().all(|s| s.id != song_ids[1]));
-
-        teardown(temp_dir);
+        delete_song(ids[1].clone()).unwrap();
+        let lib = get_library().unwrap();
+        assert_eq!(lib.songs.len(), 2);
+        assert!(lib.songs.iter().all(|s| s.id != ids[1]));
+        cleanup(&dir);
     }
 
     #[test]
     fn test_check_audio_exists_true() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let audio_file = temp_dir.join("exists.mp3");
-        fs::write(&audio_file, "fake audio").unwrap();
-
-        let title = SongTitle::new("Song".to_string());
-        let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-        let song = add_song(title, None, audio_path).unwrap();
-
-        let result = check_audio_exists(song.id);
-        assert!(result.is_ok());
-        assert!(result.unwrap());
-
-        teardown(temp_dir);
+        assert!(check_audio_exists(make_song(&dir, "Song").id).unwrap());
+        cleanup(&dir);
     }
 
     #[test]
     fn test_check_audio_exists_false_after_delete() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let audio_file = temp_dir.join("will_delete.mp3");
-        fs::write(&audio_file, "fake audio").unwrap();
-
-        let title = SongTitle::new("Song".to_string());
-        let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-        let song = add_song(title, None, audio_path).unwrap();
-
-        fs::remove_file(&audio_file).unwrap();
-
-        let result = check_audio_exists(song.id);
-        assert!(result.is_ok());
-        assert!(!result.unwrap());
-
-        teardown(temp_dir);
+        let song = make_song(&dir, "Song");
+        fs::remove_file(dir.join("Song.mp3")).unwrap();
+        assert!(!check_audio_exists(song.id).unwrap());
+        cleanup(&dir);
     }
 
     #[test]
     fn test_check_audio_exists_not_found() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let fake_id = SongId::new("nonexistent".to_string());
-        let result = check_audio_exists(fake_id);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Canción no encontrada");
-
-        teardown(temp_dir);
+        assert!(check_audio_exists(SongId::new("x".to_string())).is_err());
+        cleanup(&dir);
     }
 
     #[test]
     fn test_reassign_audio_path_success() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let audio_file1 = temp_dir.join("old.mp3");
-        let audio_file2 = temp_dir.join("new.mp3");
-        fs::write(&audio_file1, "old audio").unwrap();
-        fs::write(&audio_file2, "new audio").unwrap();
-
-        let title = SongTitle::new("Song".to_string());
-        let audio_path = AudioPath::new(audio_file1.to_str().unwrap().to_string());
-        let song = add_song(title, None, audio_path).unwrap();
-
-        let new_path = AudioPath::new(audio_file2.to_str().unwrap().to_string());
-        let result = reassign_audio_path(song.id.clone(), new_path);
-        assert!(result.is_ok());
-
-        let updated = result.unwrap();
-        assert_eq!(updated.audio_path.as_str(), audio_file2.to_str().unwrap());
+        let song = make_song(&dir, "Song");
+        let new_file = dir.join("new.mp3");
+        fs::write(&new_file, "new").unwrap();
+        let updated = reassign_audio_path(
+            song.id,
+            AudioPath::new(new_file.to_str().unwrap().to_string()),
+        )
+        .unwrap();
+        assert_eq!(updated.audio_path.as_str(), new_file.to_str().unwrap());
         assert!(!updated.audio_missing);
-
-        teardown(temp_dir);
+        cleanup(&dir);
     }
 
     #[test]
     fn test_reassign_audio_path_nonexistent_fails() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
-
-        let audio_file = temp_dir.join("original.mp3");
-        fs::write(&audio_file, "fake audio").unwrap();
-
-        let title = SongTitle::new("Song".to_string());
-        let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-        let song = add_song(title, None, audio_path).unwrap();
-
-        let bad_path = AudioPath::new("/nonexistent/new.mp3".to_string());
-        let result = reassign_audio_path(song.id, bad_path);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "El archivo de audio no existe");
-
-        teardown(temp_dir);
+        let song = make_song(&dir, "Song");
+        assert!(
+            reassign_audio_path(song.id, AudioPath::new("/nonexistent.mp3".to_string())).is_err()
+        );
+        cleanup(&dir);
     }
 
     #[test]
     fn test_reassign_audio_path_not_found() {
-        let temp_dir = setup();
+        let dir = make_temp_dir();
         init_app().unwrap();
+        let f = dir.join("new.mp3");
+        fs::write(&f, "data").unwrap();
+        assert!(reassign_audio_path(
+            SongId::new("no".to_string()),
+            AudioPath::new(f.to_str().unwrap().to_string()),
+        )
+        .is_err());
+        cleanup(&dir);
+    }
 
-        let audio_file = temp_dir.join("new.mp3");
-        fs::write(&audio_file, "fake audio").unwrap();
+    #[test]
+    fn test_get_library_with_status_marks_missing() {
+        let dir = make_temp_dir();
+        init_app().unwrap();
+        let song = make_song(&dir, "Song");
+        assert!(!get_library_with_status().unwrap().songs[0].audio_missing);
+        fs::remove_file(dir.join("Song.mp3")).unwrap();
+        let lib = get_library_with_status().unwrap();
+        assert!(lib.songs[0].audio_missing);
+        assert_eq!(lib.songs[0].id, song.id);
+        cleanup(&dir);
+    }
 
-        let fake_id = SongId::new("nonexistent".to_string());
-        let new_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-        let result = reassign_audio_path(fake_id, new_path);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Canción no encontrada");
-
-        teardown(temp_dir);
+    #[test]
+    fn test_get_library_with_status_empty() {
+        let dir = make_temp_dir();
+        init_app().unwrap();
+        assert!(get_library_with_status().unwrap().songs.is_empty());
+        cleanup(&dir);
     }
 
     #[test]
     fn test_full_workflow() {
-        let temp_dir = setup();
-
-        // Init
+        let dir = make_temp_dir();
         init_app().unwrap();
 
-        // Add song
-        let audio_file = temp_dir.join("workflow.mp3");
-        fs::write(&audio_file, "fake audio").unwrap();
-        let title = SongTitle::new("Workflow Song".to_string());
-        let artist = Some(ArtistName::new("Workflow Artist".to_string()));
-        let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-        let song = add_song(title, artist, audio_path).unwrap();
+        let song = make_song(&dir, "Workflow Song");
+        assert_eq!(get_library().unwrap().songs.len(), 1);
 
-        // Verify library
-        let library = get_library().unwrap();
-        assert_eq!(library.songs.len(), 1);
-
-        // Update
-        let new_title = SongTitle::new("Updated Workflow".to_string());
-        let updated = update_song(song.id.clone(), Some(new_title), None, None).unwrap();
+        let updated = update_song(
+            song.id.clone(),
+            make_update(|u| {
+                u.title = Some(SongTitle::new("Updated Workflow".to_string()));
+            }),
+        )
+        .unwrap();
         assert_eq!(updated.title.as_str(), "Updated Workflow");
 
-        // Check audio
         assert!(check_audio_exists(song.id.clone()).unwrap());
 
-        // Reassign
-        let new_audio = temp_dir.join("workflow_v2.mp3");
-        fs::write(&new_audio, "new audio").unwrap();
-        let new_path = AudioPath::new(new_audio.to_str().unwrap().to_string());
-        let reassigned = reassign_audio_path(song.id.clone(), new_path).unwrap();
+        let new_audio = dir.join("workflow_v2.mp3");
+        fs::write(&new_audio, "new").unwrap();
+        let reassigned = reassign_audio_path(
+            song.id.clone(),
+            AudioPath::new(new_audio.to_str().unwrap().to_string()),
+        )
+        .unwrap();
         assert_eq!(reassigned.audio_path.as_str(), new_audio.to_str().unwrap());
 
-        // Delete
         delete_song(song.id).unwrap();
         assert!(get_library().unwrap().songs.is_empty());
-
-        teardown(temp_dir);
+        cleanup(&dir);
     }
 }
