@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>US-05 — Timing Points | Bassical Mockup</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',Tahoma,sans-serif;background:#1a1a2e;color:#e0e0e0;min-height:100vh;display:flex;flex-direction:column}
+.window{flex:1;display:flex;flex-direction:column;background:linear-gradient(180deg,#2a2a4a,#1e1e36);border:1px solid #4a4a6a}
+.titlebar{background:linear-gradient(180deg,#3d3d6b,#2a2a4a 50%,#252545);padding:6px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #5a5a7a}
+.titlebar-left{display:flex;align-items:center;gap:8px}
+.titlebar-icon{width:16px;height:16px;background:linear-gradient(135deg,#6a8afc,#4a6adc);border-radius:2px}
+.titlebar-text{font-size:12px;color:#c0c0d0}
+.titlebar-buttons{display:flex;gap:2px}
+.titlebar-btn{width:28px;height:20px;background:linear-gradient(180deg,#4a4a6a,#3a3a5a);border:1px solid #5a5a7a;color:#c0c0d0;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.titlebar-btn.close{background:linear-gradient(180deg,#8a3a3a,#6a2a2a);border-color:#9a4a4a}
+.menubar{background:linear-gradient(180deg,#33335a,#2a2a4a);padding:4px 8px;display:flex;border-bottom:1px solid #4a4a6a}
+.menu-item{padding:4px 12px;font-size:12px;color:#b0b0c0;cursor:pointer}
+.menu-item:hover{background:#4a4a6a;color:#fff}
+.tabs{display:flex;background:linear-gradient(180deg,#262646,#222240);border-bottom:1px solid #4a4a6a}
+.tab{padding:8px 20px;font-size:12px;color:#8a8aaa;cursor:pointer;border-right:1px solid #3a3a5a}
+.tab:hover{background:#2e2e50;color:#b0b0c0}
+.tab.active{background:linear-gradient(180deg,#3a3a6a,#2e2e5a);color:#d0d0e0;border-bottom:2px solid #6a8afc}
+.timing-editor{flex:1;display:flex;flex-direction:column}
+.song-info{background:linear-gradient(180deg,#2e2e50,#262646);padding:8px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #4a4a6a}
+.song-info .title{font-size:14px;color:#e0e0f0;font-weight:600}
+.song-info .artist{font-size:12px;color:#8a8aaa;margin-left:8px}
+.song-info .duration{font-size:12px;color:#6a6a8a;font-family:'Consolas',monospace}
+.main-area{flex:1;display:flex}
+.waveform-area{flex:1;position:relative;background:#141428;min-height:280px;overflow:hidden}
+.wf-bars{display:flex;align-items:center;gap:1px;height:70%;padding:0 20px;width:100%;position:absolute;top:15%}
+.wf-bar{flex:1;min-width:3px;background:linear-gradient(180deg,#4a6adc,#3a50b0 50%,#2a3a80);border-radius:1px 1px 0 0}
+.beat-grid-overlay{position:absolute;inset:0;pointer-events:none}
+.beat-line{position:absolute;top:0;bottom:0;width:1px;background:rgba(106,138,252,0.12)}
+.beat-line.strong{background:rgba(106,138,252,0.25);width:2px}
+.beat-num{position:absolute;bottom:4px;font-size:9px;color:#4a4a6a;font-family:'Consolas',monospace;transform:translateX(-50%)}
+.tp-marker{position:absolute;top:0;bottom:0;width:3px;cursor:ew-resize;z-index:10}
+.tp-marker .tp-line{position:absolute;inset:0;background:#ff6a4a}
+.tp-marker.sel .tp-line{background:#ffaa4a;width:4px;box-shadow:0 0 8px rgba(255,170,74,0.4)}
+.tp-marker .tp-handle{position:absolute;top:8px;left:50%;transform:translateX(-50%);width:16px;height:16px;background:linear-gradient(180deg,#ff8a6a,#ff6a4a);border:2px solid #ffaa8a;cursor:grab}
+.tp-marker.sel .tp-handle{background:linear-gradient(180deg,#ffcc4a,#ffaa4a);border-color:#ffdd6a}
+.tp-marker .tp-label{position:absolute;top:32px;left:50%;transform:translateX(-50%);background:#ff6a4a;color:#fff;padding:4px 10px;font-size:11px;font-family:'Consolas',monospace;white-space:nowrap;min-width:120px;text-align:center}
+.tp-marker.sel .tp-label{background:#ffaa4a;color:#1a1a2e}
+.tp-marker .tp-label .bpm-v{font-size:14px;font-weight:700;display:block}
+.tp-marker .tp-label .off-v{font-size:10px;opacity:0.8}
+.playhead-line{position:absolute;top:0;bottom:0;width:2px;background:#4aaa6a;z-index:15;left:30%}
+.playhead-line::before{content:'\25B6';position:absolute;top:-14px;left:-5px;color:#4aaa6a;font-size:10px}
+.side-panel{width:280px;background:#1a1a30;border-left:1px solid #3a3a5a;display:flex;flex-direction:column}
+.panel-header{background:linear-gradient(180deg,#2e2e50,#262646);padding:10px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #3a3a5a}
+.panel-title{font-size:12px;color:#b0b0c0;text-transform:uppercase;letter-spacing:0.5px}
+.panel-btn{width:24px;height:24px;background:linear-gradient(180deg,#4a4a7a,#3a3a6a);border:1px solid #5a5a8a;color:#b0b0c0;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.panel-btn:hover{background:linear-gradient(180deg,#5a5a8a,#4a4a7a)}
+.tp-list{flex:1;overflow-y:auto}
+.tp-item{padding:10px 12px;border-bottom:1px solid #2a2a4a;cursor:pointer;display:flex;flex-direction:column;gap:6px}
+.tp-item:hover{background:#222240}
+.tp-item.sel{background:linear-gradient(180deg,#2e2e5a,#26264a);border-left:3px solid #ffaa4a}
+.tp-item-hdr{display:flex;align-items:center;justify-content:space-between}
+.tp-idx{font-size:10px;color:#6a6a8a;font-family:'Consolas',monospace}
+.tp-del{width:18px;height:18px;background:0 0;border:1px solid transparent;color:#6a6a8a;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.tp-item:hover .tp-del{border-color:#5a2a2a;color:#cc4444;background:#3a1a1a}
+.tp-fields{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.tp-field{display:flex;flex-direction:column;gap:2px}
+.tp-field label{font-size:9px;color:#6a6a8a;text-transform:uppercase;letter-spacing:0.5px}
+.tp-field input{background:#0a0a1a;border:1px solid #3a3a6a;color:#d0d0e0;padding:4px 8px;font-size:12px;font-family:'Consolas',monospace;text-align:right}
+.tp-field input:focus{outline:0;border-color:#6a8afc}
+.tp-field .unit{font-size:9px;color:#6a6a8a;margin-top:1px}
+.bottom-bar{background:linear-gradient(180deg,#262646,#222240);border-top:1px solid #4a4a6a;padding:10px 16px;display:flex;align-items:center;gap:12px}
+.tr-btn{width:36px;height:36px;background:linear-gradient(180deg,#4a4a7a,#3a3a6a);border:1px solid #5a5a8a;color:#d0d0e0;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.tr-btn:hover{background:linear-gradient(180deg,#5a5a8a,#4a4a7a)}
+.tr-btn.play{width:44px;height:44px;background:linear-gradient(180deg,#4a6adc,#3a50b0);border-color:#5a7aec;font-size:18px}
+.time-disp{font-family:'Consolas',monospace;font-size:14px;color:#b0b0c0;background:#0a0a1a;border:1px solid #3a3a6a;padding:6px 12px;min-width:90px;text-align:center}
+.progress-bar{flex:1;height:8px;background:#1a1a30;border:1px solid #3a3a6a;position:relative;cursor:pointer}
+.progress-fill{position:absolute;left:0;top:0;bottom:0;width:30%;background:linear-gradient(90deg,#4a6adc,#6a8afc)}
+.progress-thumb{position:absolute;right:-6px;top:-4px;width:12px;height:16px;background:linear-gradient(180deg,#8a8aaa,#6a6a8a);border:1px solid #aaa}
+.zoom-controls{display:flex;align-items:center;gap:4px;margin-left:auto}
+.zoom-label{font-size:10px;color:#6a6a8a;text-transform:uppercase;letter-spacing:0.5px;margin-right:4px}
+.zoom-btn{width:28px;height:28px;background:linear-gradient(180deg,#3a3a6a,#2e2e5a);border:1px solid #4a4a7a;color:#b0b0c0;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.zoom-btn:hover{background:linear-gradient(180deg,#4a4a7a,#3a3a6a)}
+.zoom-level{font-size:11px;color:#8a8aaa;font-family:'Consolas',monospace;min-width:40px;text-align:center}
+.statusbar{background:linear-gradient(180deg,#262646,#222240);border-top:1px solid #4a4a6a;padding:4px 12px;display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#6a6a8a}
+.statusbar-left{display:flex;gap:16px}
+.mockup-label{background:#6a8afc;color:#fff;padding:4px 12px;font-size:10px;text-transform:uppercase;letter-spacing:1px;text-align:center}
+.key-hint{display:inline-block;background:#2a2a4a;border:1px solid #4a4a6a;padding:1px 5px;font-size:9px;font-family:'Consolas',monospace;color:#8a8aaa}
+</style>
+</head>
+<body>
+
+<div class="mockup-label">MOCKUP — US-05: Ajuste Fino de Timing Points</div>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="titlebar-left">
+      <div class="titlebar-icon"></div>
+      <span class="titlebar-text">Bassical — Timing Points: My Generation</span>
+    </div>
+    <div class="titlebar-buttons">
+      <div class="titlebar-btn">_</div>
+      <div class="titlebar-btn">[]</div>
+      <div class="titlebar-btn close">X</div>
+    </div>
+  </div>
+
+  <div class="menubar">
+    <div class="menu-item">Archivo</div>
+    <div class="menu-item">Calibracion</div>
+    <div class="menu-item">Ver</div>
+    <div class="menu-item">Ayuda</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab">Biblioteca</div>
+    <div class="tab">Editor</div>
+    <div class="tab active">Calibrador</div>
+    <div class="tab">Play-Along</div>
+  </div>
+
+  <div class="timing-editor">
+    <div class="song-info">
+      <div>
+        <span class="title">My Generation</span>
+        <span class="artist">The Who</span>
+      </div>
+      <span class="duration">3:18</span>
+    </div>
+
+    <div class="main-area">
+      <div class="waveform-area">
+        <div class="wf-bars">
+          <div class="wf-bar" style="height:25%"></div>
+          <div class="wf-bar" style="height:40%"></div>
+          <div class="wf-bar" style="height:60%"></div>
+          <div class="wf-bar" style="height:85%"></div>
+          <div class="wf-bar" style="height:70%"></div>
+          <div class="wf-bar" style="height:95%"></div>
+          <div class="wf-bar" style="height:100%"></div>
+          <div class="wf-bar" style="height:80%"></div>
+          <div class="wf-bar" style="height:50%"></div>
+          <div class="wf-bar" style="height:65%"></div>
+          <div class="wf-bar" style="height:90%"></div>
+          <div class="wf-bar" style="height:75%"></div>
+          <div class="wf-bar" style="height:55%"></div>
+          <div class="wf-bar" style="height:100%"></div>
+          <div class="wf-bar" style="height:85%"></div>
+          <div class="wf-bar" style="height:65%"></div>
+          <div class="wf-bar" style="height:45%"></div>
+          <div class="wf-bar" style="height:80%"></div>
+          <div class="wf-bar" style="height:95%"></div>
+          <div class="wf-bar" style="height:60%"></div>
+          <div class="wf-bar" style="height:75%"></div>
+          <div class="wf-bar" style="height:90%"></div>
+          <div class="wf-bar" style="height:50%"></div>
+          <div class="wf-bar" style="height:70%"></div>
+          <div class="wf-bar" style="height:85%"></div>
+          <div class="wf-bar" style="height:55%"></div>
+          <div class="wf-bar" style="height:75%"></div>
+          <div class="wf-bar" style="height:95%"></div>
+          <div class="wf-bar" style="height:65%"></div>
+          <div class="wf-bar" style="height:45%"></div>
+          <div class="wf-bar" style="height:80%"></div>
+          <div class="wf-bar" style="height:60%"></div>
+          <div class="wf-bar" style="height:90%"></div>
+          <div class="wf-bar" style="height:70%"></div>
+          <div class="wf-bar" style="height:50%"></div>
+          <div class="wf-bar" style="height:85%"></div>
+          <div class="wf-bar" style="height:65%"></div>
+          <div class="wf-bar" style="height:100%"></div>
+          <div class="wf-bar" style="height:75%"></div>
+          <div class="wf-bar" style="height:55%"></div>
+        </div>
+
+        <div class="beat-grid-overlay">
+          <div class="beat-line strong" style="left:20%"><span class="beat-num">1</span></div>
+          <div class="beat-line" style="left:27%"><span class="beat-num">2</span></div>
+          <div class="beat-line" style="left:34%"><span class="beat-num">3</span></div>
+          <div class="beat-line" style="left:41%"><span class="beat-num">4</span></div>
+          <div class="beat-line strong" style="left:48%"><span class="beat-num">5</span></div>
+          <div class="beat-line" style="left:55%"><span class="beat-num">6</span></div>
+          <div class="beat-line" style="left:62%"><span class="beat-num">7</span></div>
+          <div class="beat-line" style="left:69%"><span class="beat-num">8</span></div>
+          <div class="beat-line strong" style="left:76%"><span class="beat-num">9</span></div>
+          <div class="beat-line" style="left:83%"><span class="beat-num">10</span></div>
+          <div class="beat-line" style="left:90%"><span class="beat-num">11</span></div>
+        </div>
+
+        <div class="tp-marker" style="left:20%">
+          <div class="tp-line"></div>
+          <div class="tp-handle"></div>
+          <div class="tp-label"><span class="bpm-v">132.0 BPM</span><span class="off-v">1240 ms</span></div>
+        </div>
+
+        <div class="tp-marker sel" style="left:58%">
+          <div class="tp-line"></div>
+          <div class="tp-handle"></div>
+          <div class="tp-label"><span class="bpm-v">134.5 BPM</span><span class="off-v">48300 ms</span></div>
+        </div>
+
+        <div class="tp-marker" style="left:82%">
+          <div class="tp-line"></div>
+          <div class="tp-handle"></div>
+          <div class="tp-label"><span class="bpm-v">130.0 BPM</span><span class="off-v">95200 ms</span></div>
+        </div>
+
+        <div class="playhead-line"></div>
+      </div>
+
+      <div class="side-panel">
+        <div class="panel-header">
+          <span class="panel-title">Timing Points</span>
+          <div style="display:flex;gap:4px">
+            <button class="panel-btn" title="Agregar">+</button>
+          </div>
+        </div>
+
+        <div class="tp-list">
+          <div class="tp-item">
+            <div class="tp-item-hdr">
+              <span class="tp-idx">TP #1</span>
+              <button class="tp-del" title="Eliminar">X</button>
+            </div>
+            <div class="tp-fields">
+              <div class="tp-field">
+                <label>BPM</label>
+                <input type="text" value="132.0">
+                <span class="unit">beats/min</span>
+              </div>
+              <div class="tp-field">
+                <label>Offset</label>
+                <input type="text" value="1240">
+                <span class="unit">ms</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="tp-item sel">
+            <div class="tp-item-hdr">
+              <span class="tp-idx">TP #2</span>
+              <button class="tp-del" title="Eliminar">X</button>
+            </div>
+            <div class="tp-fields">
+              <div class="tp-field">
+                <label>BPM</label>
+                <input type="text" value="134.5">
+                <span class="unit">beats/min</span>
+              </div>
+              <div class="tp-field">
+                <label>Offset</label>
+                <input type="text" value="48300">
+                <span class="unit">ms</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="tp-item">
+            <div class="tp-item-hdr">
+              <span class="tp-idx">TP #3</span>
+              <button class="tp-del" title="Eliminar">X</button>
+            </div>
+            <div class="tp-fields">
+              <div class="tp-field">
+                <label>BPM</label>
+                <input type="text" value="130.0">
+                <span class="unit">beats/min</span>
+              </div>
+              <div class="tp-field">
+                <label>Offset</label>
+                <input type="text" value="95200">
+                <span class="unit">ms</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bottom-bar">
+      <button class="tr-btn">|&lt;</button>
+      <button class="tr-btn play">></button>
+      <button class="tr-btn">>|</button>
+      <div class="time-disp">1:08</div>
+      <div class="progress-bar">
+        <div class="progress-fill"><div class="progress-thumb"></div></div>
+      </div>
+      <div class="time-disp">3:18</div>
+      <div class="zoom-controls">
+        <span class="zoom-label">Zoom</span>
+        <button class="zoom-btn">-</button>
+        <span class="zoom-level">100%</span>
+        <button class="zoom-btn">+</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="statusbar">
+    <div class="statusbar-left">
+      <span>3 timing points | Beat grid activo</span>
+      <span>Seleccionado: TP #2 (48300 ms)</span>
+    </div>
+    <span>Bassical v0.1.0</span>
+  </div>
+</div>
+
+</body>
+</html>

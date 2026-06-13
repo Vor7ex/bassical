@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>US-02 — Calibrador de Tempo | Bassical Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .window {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(180deg, #2a2a4a 0%, #1e1e36 100%);
+    border: 1px solid #4a4a6a;
+  }
+
+  .titlebar {
+    background: linear-gradient(180deg, #3d3d6b 0%, #2a2a4a 50%, #252545 100%);
+    padding: 6px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #5a5a7a;
+  }
+
+  .titlebar-left { display: flex; align-items: center; gap: 8px; }
+
+  .titlebar-icon {
+    width: 16px; height: 16px;
+    background: linear-gradient(135deg, #6a8afc, #4a6adc);
+    border-radius: 2px;
+  }
+
+  .titlebar-text { font-size: 12px; color: #c0c0d0; }
+
+  .titlebar-buttons { display: flex; gap: 2px; }
+
+  .titlebar-btn {
+    width: 28px; height: 20px;
+    background: linear-gradient(180deg, #4a4a6a 0%, #3a3a5a 100%);
+    border: 1px solid #5a5a7a;
+    color: #c0c0d0; font-size: 10px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+
+  .titlebar-btn.close {
+    background: linear-gradient(180deg, #8a3a3a 0%, #6a2a2a 100%);
+    border-color: #9a4a4a;
+  }
+
+  .menubar {
+    background: linear-gradient(180deg, #33335a 0%, #2a2a4a 100%);
+    padding: 4px 8px; display: flex; gap: 0;
+    border-bottom: 1px solid #4a4a6a;
+  }
+
+  .menu-item {
+    padding: 4px 12px; font-size: 12px; color: #b0b0c0; cursor: pointer;
+  }
+
+  .menu-item:hover { background: #4a4a6a; color: #fff; }
+
+  .tabs {
+    display: flex;
+    background: linear-gradient(180deg, #262646 0%, #222240 100%);
+    border-bottom: 1px solid #4a4a6a;
+  }
+
+  .tab {
+    padding: 8px 20px; font-size: 12px; color: #8a8aaa;
+    cursor: pointer; border-right: 1px solid #3a3a5a;
+  }
+
+  .tab:hover { background: #2e2e50; color: #b0b0c0; }
+
+  .tab.active {
+    background: linear-gradient(180deg, #3a3a6a 0%, #2e2e5a 100%);
+    color: #d0d0e0; border-bottom: 2px solid #6a8afc;
+  }
+
+  /* Main calibrator area */
+  .calibrator {
+    flex: 1; display: flex; flex-direction: column;
+  }
+
+  /* Song info bar */
+  .song-info {
+    background: linear-gradient(180deg, #2e2e50 0%, #262646 100%);
+    padding: 10px 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid #4a4a6a;
+  }
+
+  .song-info .title {
+    font-size: 14px; color: #e0e0f0; font-weight: 600;
+  }
+
+  .song-info .artist {
+    font-size: 12px; color: #8a8aaa; margin-left: 8px;
+  }
+
+  .song-info .duration {
+    font-size: 12px; color: #6a6a8a;
+    font-family: 'Consolas', monospace;
+  }
+
+  /* Waveform area */
+  .waveform-container {
+    flex: 1; position: relative;
+    background: #141428;
+    border-bottom: 1px solid #3a3a5a;
+    overflow: hidden;
+    min-height: 300px;
+  }
+
+  .waveform {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  /* Simulated waveform bars */
+  .waveform-bars {
+    display: flex; align-items: center; gap: 1px;
+    height: 80%; padding: 0 20px; width: 100%;
+  }
+
+  .wf-bar {
+    flex: 1; min-width: 2px;
+    background: linear-gradient(180deg, #4a6adc 0%, #3a50b0 50%, #2a3a80 100%);
+    border-radius: 1px 1px 0 0;
+  }
+
+  .wf-bar.negative {
+    background: linear-gradient(0deg, #4a6adc 0%, #3a50b0 50%, #2a3a80 100%);
+    border-radius: 0 0 1px 1px;
+  }
+
+  /* Timing point markers */
+  .timing-marker {
+    position: absolute; top: 0; bottom: 0;
+    width: 2px; background: #ff6a4a;
+    z-index: 10;
+  }
+
+  .timing-marker::before {
+    content: attr(data-bpm);
+    position: absolute; top: 8px; left: 8px;
+    background: #ff6a4a; color: #fff;
+    padding: 2px 8px; font-size: 11px;
+    font-family: 'Consolas', monospace;
+    white-space: nowrap;
+  }
+
+  .timing-marker::after {
+    content: attr(data-offset);
+    position: absolute; bottom: 8px; left: 8px;
+    background: rgba(255,106,74,0.8); color: #fff;
+    padding: 2px 8px; font-size: 10px;
+    font-family: 'Consolas', monospace;
+    white-space: nowrap;
+  }
+
+  /* Beat grid overlay */
+  .beat-grid {
+    position: absolute; inset: 0;
+    pointer-events: none;
+  }
+
+  .beat-line {
+    position: absolute; top: 0; bottom: 0;
+    width: 1px; background: rgba(106,138,252,0.15);
+  }
+
+  .beat-line.strong {
+    background: rgba(106,138,252,0.3);
+    width: 2px;
+  }
+
+  /* Current playback position */
+  .playhead {
+    position: absolute; top: 0; bottom: 0;
+    width: 2px; background: #4aaa6a;
+    z-index: 20;
+    left: 35%;
+  }
+
+  .playhead::before {
+    content: '▶';
+    position: absolute; top: -16px; left: -6px;
+    color: #4aaa6a; font-size: 12px;
+  }
+
+  /* BPM display panel */
+  .bpm-panel {
+    background: linear-gradient(180deg, #1e1e36 0%, #161630 100%);
+    border-top: 1px solid #4a4a6a;
+    padding: 16px 24px;
+    display: flex; align-items: center; gap: 32px;
+  }
+
+  .bpm-display {
+    background: #0a0a1a;
+    border: 2px solid #3a3a6a;
+    padding: 12px 24px;
+    text-align: center;
+    box-shadow: inset 0 2px 8px rgba(0,0,0,0.5);
+  }
+
+  .bpm-display .label {
+    font-size: 10px; color: #6a6a8a;
+    text-transform: uppercase; letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+
+  .bpm-display .value {
+    font-size: 36px; font-weight: 700;
+    color: #4aaa6a;
+    font-family: 'Consolas', 'Courier New', monospace;
+    text-shadow: 0 0 12px rgba(74,170,106,0.4);
+    line-height: 1;
+  }
+
+  .bpm-display .unit {
+    font-size: 12px; color: #6a6a8a;
+    margin-top: 2px;
+  }
+
+  .offset-display {
+    background: #0a0a1a;
+    border: 2px solid #3a3a6a;
+    padding: 12px 24px;
+    text-align: center;
+    box-shadow: inset 0 2px 8px rgba(0,0,0,0.5);
+  }
+
+  .offset-display .label {
+    font-size: 10px; color: #6a6a8a;
+    text-transform: uppercase; letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+
+  .offset-display .value {
+    font-size: 24px; font-weight: 600;
+    color: #ff6a4a;
+    font-family: 'Consolas', monospace;
+    line-height: 1;
+  }
+
+  .offset-display .unit {
+    font-size: 12px; color: #6a6a8a;
+    margin-top: 2px;
+  }
+
+  /* Tap button area */
+  .tap-area {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    margin-left: auto;
+  }
+
+  .tap-button {
+    width: 120px; height: 120px;
+    background: linear-gradient(180deg, #5a5a8a 0%, #3a3a6a 40%, #2a2a5a 100%);
+    border: 3px solid #6a6a9a;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4), inset 0 2px 4px rgba(255,255,255,0.1);
+    transition: transform 0.05s, box-shadow 0.05s;
+    user-select: none;
+  }
+
+  .tap-button:active {
+    transform: scale(0.96);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4), inset 0 2px 8px rgba(0,0,0,0.3);
+    background: linear-gradient(180deg, #4a4a7a 0%, #2a2a5a 100%);
+  }
+
+  .tap-button .key {
+    font-size: 28px; font-weight: 700;
+    color: #d0d0e0;
+    font-family: 'Consolas', monospace;
+  }
+
+  .tap-button .label {
+    font-size: 10px; color: #8a8aaa;
+    text-transform: uppercase; letter-spacing: 1px;
+    margin-top: 2px;
+  }
+
+  .tap-hint {
+    font-size: 11px; color: #6a6a8a;
+    text-align: center;
+  }
+
+  /* Taps counter */
+  .taps-counter {
+    background: #0a0a1a;
+    border: 1px solid #3a3a6a;
+    padding: 8px 16px;
+    text-align: center;
+  }
+
+  .taps-counter .label {
+    font-size: 10px; color: #6a6a8a;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+
+  .taps-counter .value {
+    font-size: 18px; font-weight: 600;
+    color: #6a8afc;
+    font-family: 'Consolas', monospace;
+  }
+
+  /* Playback controls */
+  .playback-bar {
+    background: linear-gradient(180deg, #262646 0%, #222240 100%);
+    border-top: 1px solid #4a4a6a;
+    padding: 10px 16px;
+    display: flex; align-items: center; gap: 12px;
+  }
+
+  .transport-btn {
+    width: 36px; height: 36px;
+    background: linear-gradient(180deg, #4a4a7a 0%, #3a3a6a 100%);
+    border: 1px solid #5a5a8a;
+    color: #d0d0e0; font-size: 14px;
+    cursor: pointer; display: flex;
+    align-items: center; justify-content: center;
+  }
+
+  .transport-btn:hover {
+    background: linear-gradient(180deg, #5a5a8a 0%, #4a4a7a 100%);
+  }
+
+  .transport-btn.play {
+    width: 44px; height: 44px;
+    background: linear-gradient(180deg, #4a6adc 0%, #3a50b0 100%);
+    border-color: #5a7aec;
+    font-size: 18px;
+  }
+
+  .transport-btn.play:hover {
+    background: linear-gradient(180deg, #5a7aec 0%, #4a6adc 100%);
+  }
+
+  .time-display {
+    font-family: 'Consolas', monospace;
+    font-size: 14px; color: #b0b0c0;
+    background: #0a0a1a;
+    border: 1px solid #3a3a6a;
+    padding: 6px 12px;
+    min-width: 100px;
+    text-align: center;
+  }
+
+  .progress-bar {
+    flex: 1; height: 8px;
+    background: #1a1a30;
+    border: 1px solid #3a3a6a;
+    position: relative;
+    cursor: pointer;
+  }
+
+  .progress-fill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    width: 35%;
+    background: linear-gradient(90deg, #4a6adc, #6a8afc);
+  }
+
+  .progress-thumb {
+    position: absolute; right: -6px; top: -4px;
+    width: 12px; height: 16px;
+    background: linear-gradient(180deg, #8a8aaa 0%, #6a6a8a 100%);
+    border: 1px solid #aaa;
+  }
+
+  /* BPM flash feedback */
+  .bpm-flash {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 48px; font-weight: 700;
+    color: rgba(74,170,106,0.8);
+    font-family: 'Consolas', monospace;
+    pointer-events: none;
+    opacity: 0;
+    animation: flash 0.6s ease-out;
+  }
+
+  @keyframes flash {
+    0% { opacity: 1; transform: translate(-50%, -50%) scale(1.2); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(1); }
+  }
+
+  .statusbar {
+    background: linear-gradient(180deg, #262646 0%, #222240 100%);
+    border-top: 1px solid #4a4a6a;
+    padding: 4px 12px;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11px; color: #6a6a8a;
+  }
+
+  .mockup-label {
+    background: #6a8afc; color: #fff;
+    padding: 4px 12px; font-size: 10px;
+    text-transform: uppercase; letter-spacing: 1px; text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div class="mockup-label">MOCKUP — US-02: Calibrador de Tempo Asistido (Tap)</div>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="titlebar-left">
+      <div class="titlebar-icon"></div>
+      <span class="titlebar-text">Bassical — Calibrador de Tempo</span>
+    </div>
+    <div class="titlebar-buttons">
+      <div class="titlebar-btn">─</div>
+      <div class="titlebar-btn">□</div>
+      <div class="titlebar-btn close">✕</div>
+    </div>
+  </div>
+
+  <div class="menubar">
+    <div class="menu-item">Archivo</div>
+    <div class="menu-item">Calibración</div>
+    <div class="menu-item">Ver</div>
+    <div class="menu-item">Ayuda</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab">Biblioteca</div>
+    <div class="tab">Editor</div>
+    <div class="tab active">Calibrador</div>
+    <div class="tab">Play-Along</div>
+  </div>
+
+  <div class="calibrator">
+    <div class="song-info">
+      <div>
+        <span class="title">My Generation</span>
+        <span class="artist">The Who</span>
+      </div>
+      <span class="duration">3:18 / 3:18</span>
+    </div>
+
+    <div class="waveform-container">
+      <div class="waveform">
+        <div class="waveform-bars">
+          <!-- Simulated waveform -->
+          <div class="wf-bar" style="height:20%"></div>
+          <div class="wf-bar" style="height:35%"></div>
+          <div class="wf-bar" style="height:55%"></div>
+          <div class="wf-bar" style="height:80%"></div>
+          <div class="wf-bar" style="height:65%"></div>
+          <div class="wf-bar" style="height:90%"></div>
+          <div class="wf-bar" style="height:100%"></div>
+          <div class="wf-bar" style="height:75%"></div>
+          <div class="wf-bar" style="height:45%"></div>
+          <div class="wf-bar" style="height:60%"></div>
+          <div class="wf-bar" style="height:85%"></div>
+          <div class="wf-bar" style="height:70%"></div>
+          <div class="wf-bar" style="height:50%"></div>
+          <div class="wf-bar" style="height:95%"></div>
+          <div class="wf-bar" style="height:80%"></div>
+          <div class="wf-bar" style="height:60%"></div>
+          <div class="wf-bar" style="height:40%"></div>
+          <div class="wf-bar" style="height:75%"></div>
+          <div class="wf-bar" style="height:90%"></div>
+          <div class="wf-bar" style="height:55%"></div>
+          <div class="wf-bar" style="height:70%"></div>
+          <div class="wf-bar" style="height:85%"></div>
+          <div class="wf-bar" style="height:45%"></div>
+          <div class="wf-bar" style="height:65%"></div>
+          <div class="wf-bar" style="height:80%"></div>
+          <div class="wf-bar" style="height:50%"></div>
+          <div class="wf-bar" style="height:70%"></div>
+          <div class="wf-bar" style="height:90%"></div>
+          <div class="wf-bar" style="height:60%"></div>
+          <div class="wf-bar" style="height:40%"></div>
+          <div class="wf-bar" style="height:75%"></div>
+          <div class="wf-bar" style="height:55%"></div>
+          <div class="wf-bar" style="height:85%"></div>
+          <div class="wf-bar" style="height:65%"></div>
+          <div class="wf-bar" style="height:45%"></div>
+          <div class="wf-bar" style="height:80%"></div>
+          <div class="wf-bar" style="height:60%"></div>
+          <div class="wf-bar" style="height:95%"></div>
+          <div class="wf-bar" style="height:70%"></div>
+          <div class="wf-bar" style="height:50%"></div>
+        </div>
+      </div>
+
+      <!-- Beat grid -->
+      <div class="beat-grid">
+        <div class="beat-line strong" style="left:20%"></div>
+        <div class="beat-line" style="left:27%"></div>
+        <div class="beat-line" style="left:34%"></div>
+        <div class="beat-line" style="left:41%"></div>
+        <div class="beat-line strong" style="left:48%"></div>
+        <div class="beat-line" style="left:55%"></div>
+        <div class="beat-line" style="left:62%"></div>
+        <div class="beat-line" style="left:69%"></div>
+        <div class="beat-line strong" style="left:76%"></div>
+      </div>
+
+      <!-- Timing point marker -->
+      <div class="timing-marker" style="left:20%" data-bpm="BPM 132.0" data-offset="1240 ms"></div>
+
+      <!-- Playhead -->
+      <div class="playhead"></div>
+
+      <!-- BPM flash feedback -->
+      <div class="bpm-flash">132</div>
+    </div>
+
+    <div class="bpm-panel">
+      <div class="bpm-display">
+        <div class="label">BPM Detectado</div>
+        <div class="value">132.0</div>
+        <div class="unit">beats/min</div>
+      </div>
+
+      <div class="offset-display">
+        <div class="label">Offset</div>
+        <div class="value">1240</div>
+        <div class="unit">milisegundos</div>
+      </div>
+
+      <div class="taps-counter">
+        <div class="label">Pulsaciones</div>
+        <div class="value">32</div>
+      </div>
+
+      <div class="tap-area">
+        <div class="tap-button">
+          <span class="key">T</span>
+          <span class="label">TAP</span>
+        </div>
+        <div class="tap-hint">Presiona <strong>T</strong> al ritmo de la música<br>Mínimo 8 compases para precisión</div>
+      </div>
+    </div>
+
+    <div class="playback-bar">
+      <button class="transport-btn">⏮</button>
+      <button class="transport-btn play">▶</button>
+      <button class="transport-btn">⏭</button>
+      <div class="time-display">1:08</div>
+      <div class="progress-bar">
+        <div class="progress-fill">
+          <div class="progress-thumb"></div>
+        </div>
+      </div>
+      <div class="time-display">3:18</div>
+    </div>
+  </div>
+
+  <div class="statusbar">
+    <span>Latencia de input: &lt; 10 ms | Timing points: 1</span>
+    <span>Bassical v0.1.0</span>
+  </div>
+</div>
+
+</body>
+</html>

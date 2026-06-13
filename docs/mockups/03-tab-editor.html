@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>US-03 — Editor de Tablatura | Bassical Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #1a1a2e; color: #e0e0e0;
+    min-height: 100vh; display: flex; flex-direction: column;
+  }
+
+  .window {
+    flex: 1; display: flex; flex-direction: column;
+    background: linear-gradient(180deg, #2a2a4a 0%, #1e1e36 100%);
+    border: 1px solid #4a4a6a;
+  }
+
+  .titlebar {
+    background: linear-gradient(180deg, #3d3d6b 0%, #2a2a4a 50%, #252545 100%);
+    padding: 6px 12px; display: flex; align-items: center;
+    justify-content: space-between; border-bottom: 1px solid #5a5a7a;
+  }
+
+  .titlebar-left { display: flex; align-items: center; gap: 8px; }
+
+  .titlebar-icon {
+    width: 16px; height: 16px;
+    background: linear-gradient(135deg, #6a8afc, #4a6adc); border-radius: 2px;
+  }
+
+  .titlebar-text { font-size: 12px; color: #c0c0d0; }
+
+  .titlebar-buttons { display: flex; gap: 2px; }
+
+  .titlebar-btn {
+    width: 28px; height: 20px;
+    background: linear-gradient(180deg, #4a4a6a 0%, #3a3a5a 100%);
+    border: 1px solid #5a5a7a; color: #c0c0d0; font-size: 10px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+
+  .titlebar-btn.close {
+    background: linear-gradient(180deg, #8a3a3a 0%, #6a2a2a 100%);
+    border-color: #9a4a4a;
+  }
+
+  .menubar {
+    background: linear-gradient(180deg, #33335a 0%, #2a2a4a 100%);
+    padding: 4px 8px; display: flex;
+    border-bottom: 1px solid #4a4a6a;
+  }
+
+  .menu-item { padding: 4px 12px; font-size: 12px; color: #b0b0c0; cursor: pointer; }
+  .menu-item:hover { background: #4a4a6a; color: #fff; }
+
+  .tabs {
+    display: flex; background: linear-gradient(180deg, #262646 0%, #222240 100%);
+    border-bottom: 1px solid #4a4a6a;
+  }
+
+  .tab {
+    padding: 8px 20px; font-size: 12px; color: #8a8aaa;
+    cursor: pointer; border-right: 1px solid #3a3a5a;
+  }
+
+  .tab:hover { background: #2e2e50; color: #b0b0c0; }
+
+  .tab.active {
+    background: linear-gradient(180deg, #3a3a6a 0%, #2e2e5a 100%);
+    color: #d0d0e0; border-bottom: 2px solid #6a8afc;
+  }
+
+  /* Toolbar */
+  .toolbar {
+    background: linear-gradient(180deg, #2e2e50 0%, #262646 100%);
+    padding: 6px 12px; display: flex; align-items: center; gap: 4px;
+    border-bottom: 1px solid #4a4a6a; flex-wrap: wrap;
+  }
+
+  .tool-group {
+    display: flex; gap: 2px;
+    background: #1a1a30; padding: 3px;
+    border: 1px solid #3a3a5a;
+  }
+
+  .tool-btn {
+    width: 32px; height: 28px;
+    background: linear-gradient(180deg, #3a3a6a 0%, #2e2e5a 100%);
+    border: 1px solid #4a4a7a; color: #b0b0c0;
+    font-size: 12px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .tool-btn:hover {
+    background: linear-gradient(180deg, #4a4a7a 0%, #3a3a6a 100%);
+    border-color: #5a5a8a;
+  }
+
+  .tool-btn.active {
+    background: linear-gradient(180deg, #4a6adc 0%, #3a50b0 100%);
+    border-color: #5a7aec; color: #fff;
+  }
+
+  .tool-separator {
+    width: 1px; height: 28px; background: #3a3a5a; margin: 0 6px;
+  }
+
+  .tool-label {
+    font-size: 10px; color: #6a6a8a;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    margin-right: 4px; align-self: center;
+  }
+
+  /* Rhythm selector */
+  .rhythm-selector {
+    display: flex; gap: 2px; background: #1a1a30;
+    padding: 3px; border: 1px solid #3a3a5a;
+  }
+
+  .rhythm-btn {
+    width: 36px; height: 28px;
+    background: linear-gradient(180deg, #3a3a6a 0%, #2e2e5a 100%);
+    border: 1px solid #4a4a7a; color: #b0b0c0;
+    font-size: 14px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-family: serif;
+  }
+
+  .rhythm-btn:hover {
+    background: linear-gradient(180deg, #4a4a7a 0%, #3a3a6a 100%);
+  }
+
+  .rhythm-btn.active {
+    background: linear-gradient(180deg, #6a4adc 0%, #5a3ab0 100%);
+    border-color: #7a5aec; color: #fff;
+  }
+
+  /* Technique selector */
+  .technique-selector {
+    display: flex; gap: 2px; background: #1a1a30;
+    padding: 3px; border: 1px solid #3a3a5a;
+  }
+
+  .tech-btn {
+    padding: 0 10px; height: 28px;
+    background: linear-gradient(180deg, #3a3a6a 0%, #2e2e5a 100%);
+    border: 1px solid #4a4a7a; color: #b0b0c0;
+    font-size: 11px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Consolas', monospace;
+  }
+
+  .tech-btn:hover {
+    background: linear-gradient(180deg, #4a4a7a 0%, #3a3a6a 100%);
+  }
+
+  .tech-btn.active {
+    background: linear-gradient(180deg, #4a8a4a 0%, #3a6a3a 100%);
+    border-color: #5a9a5a; color: #fff;
+  }
+
+  /* Editor area */
+  .editor-container {
+    flex: 1; display: flex; overflow: hidden;
+  }
+
+  /* Measure numbers sidebar */
+  .measure-numbers {
+    width: 40px; background: #161630;
+    border-right: 1px solid #3a3a5a;
+    display: flex; flex-direction: column;
+  }
+
+  .measure-num {
+    height: 56px; display: flex;
+    align-items: center; justify-content: center;
+    font-size: 11px; color: #6a6a8a;
+    border-bottom: 1px solid #2a2a4a;
+    font-family: 'Consolas', monospace;
+  }
+
+  .measure-num.current {
+    background: #2a2a4a; color: #6a8afc;
+  }
+
+  /* Tab grid */
+  .tab-grid {
+    flex: 1; overflow-x: auto; overflow-y: auto;
+    padding: 0;
+  }
+
+  .tab-measure {
+    display: flex; flex-direction: column;
+    border-bottom: 2px solid #3a3a5a;
+  }
+
+  .tab-measure.current {
+    background: rgba(106,138,252,0.05);
+  }
+
+  .tab-string {
+    display: flex; align-items: center;
+    height: 28px;
+    border-bottom: 1px solid #2a2a4a;
+  }
+
+  .string-label {
+    width: 24px; text-align: center;
+    font-size: 10px; color: #6a6a8a;
+    font-family: 'Consolas', monospace;
+    background: #161630;
+    border-right: 1px solid #3a3a5a;
+    height: 100%; display: flex;
+    align-items: center; justify-content: center;
+  }
+
+  .string-line {
+    flex: 1; height: 1px;
+    background: #4a4a6a;
+    position: relative;
+  }
+
+  .tab-cells {
+    display: flex; position: absolute;
+    inset: 0;
+  }
+
+  .tab-cell {
+    flex: 1; display: flex;
+    align-items: center; justify-content: center;
+    border-right: 1px solid #2a2a4a;
+    cursor: pointer; position: relative;
+    min-width: 36px;
+  }
+
+  .tab-cell:hover {
+    background: rgba(106,138,252,0.15);
+  }
+
+  .tab-cell .fret {
+    font-size: 14px; font-weight: 600;
+    color: #e0e0f0;
+    font-family: 'Consolas', monospace;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+  }
+
+  .tab-cell .fret.zero {
+    color: #6a6a8a;
+  }
+
+  .tab-cell .technique {
+    position: absolute; top: -2px; right: 2px;
+    font-size: 9px; color: #ff6a4a;
+    font-family: 'Consolas', monospace;
+  }
+
+  .tab-cell.selected {
+    background: rgba(106,138,252,0.25);
+    border: 1px solid #6a8afc;
+  }
+
+  .tab-cell .cursor-line {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    width: 2px; background: #4aaa6a;
+  }
+
+  /* Beat divisions */
+  .beat-marker {
+    position: absolute; top: 0; bottom: 0;
+    width: 1px; background: rgba(106,138,252,0.2);
+  }
+
+  /* Undo/Redo status */
+  .edit-status {
+    display: flex; align-items: center; gap: 12px;
+    margin-left: auto;
+  }
+
+  .edit-status .undo-count {
+    font-size: 11px; color: #6a6a8a;
+    font-family: 'Consolas', monospace;
+  }
+
+  .edit-status .btn {
+    background: linear-gradient(180deg, #4a4a7a 0%, #3a3a6a 100%);
+    border: 1px solid #5a5a8a; color: #b0b0c0;
+    padding: 4px 10px; font-size: 11px; cursor: pointer;
+  }
+
+  .edit-status .btn:hover {
+    background: linear-gradient(180deg, #5a5a8a 0%, #4a4a7a 100%);
+  }
+
+  .edit-status .btn:disabled {
+    opacity: 0.4; cursor: default;
+  }
+
+  /* Status bar */
+  .statusbar {
+    background: linear-gradient(180deg, #262646 0%, #222240 100%);
+    border-top: 1px solid #4a4a6a;
+    padding: 4px 12px;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11px; color: #6a6a8a;
+  }
+
+  .statusbar-left { display: flex; gap: 16px; }
+
+  .mockup-label {
+    background: #6a8afc; color: #fff;
+    padding: 4px 12px; font-size: 10px;
+    text-transform: uppercase; letter-spacing: 1px; text-align: center;
+  }
+
+  /* Keyboard hint */
+  .key-hint {
+    display: inline-block;
+    background: #2a2a4a;
+    border: 1px solid #4a4a6a;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-family: 'Consolas', monospace;
+    color: #b0b0c0;
+    margin-left: 4px;
+  }
+</style>
+</head>
+<body>
+
+<div class="mockup-label">MOCKUP — US-03: Editor de Tablatura Básico</div>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="titlebar-left">
+      <div class="titlebar-icon"></div>
+      <span class="titlebar-text">Bassical — Editor de Tablatura: My Generation</span>
+    </div>
+    <div class="titlebar-buttons">
+      <div class="titlebar-btn">─</div>
+      <div class="titlebar-btn">□</div>
+      <div class="titlebar-btn close">✕</div>
+    </div>
+  </div>
+
+  <div class="menubar">
+    <div class="menu-item">Archivo</div>
+    <div class="menu-item">Editar</div>
+    <div class="menu-item">Compás</div>
+    <div class="menu-item">Ver</div>
+    <div class="menu-item">Ayuda</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab">Biblioteca</div>
+    <div class="tab active">Editor</div>
+    <div class="tab">Calibrador</div>
+    <div class="tab">Play-Along</div>
+  </div>
+
+  <div class="toolbar">
+    <span class="tool-label">Valor:</span>
+    <div class="rhythm-selector">
+      <button class="rhythm-btn" title="Redonda">𝅝</button>
+      <button class="rhythm-btn" title="Blanca">𝅗𝅥</button>
+      <button class="rhythm-btn active" title="Negra">♩</button>
+      <button class="rhythm-btn" title="Corchea">♪</button>
+      <button class="rhythm-btn" title="Semicorchea">♬</button>
+    </div>
+
+    <div class="tool-separator"></div>
+
+    <span class="tool-label">Técnica:</span>
+    <div class="technique-selector">
+      <button class="tech-btn" title="Hammer-on">h</button>
+      <button class="tech-btn" title="Pull-off">p</button>
+      <button class="tech-btn" title="Slide up">/</button>
+      <button class="tech-btn" title="Slide down">\</button>
+      <button class="tech-btn" title="Vibrato">~</button>
+      <button class="tech-btn" title="Mute">x</button>
+      <button class="tech-btn" title="Ghost note">( )</button>
+    </div>
+
+    <div class="tool-separator"></div>
+
+    <span class="tool-label">Compás:</span>
+    <div class="tool-group">
+      <button class="tool-btn" title="Insertar compás">+</button>
+      <button class="tool-btn" title="Eliminar compás">−</button>
+    </div>
+
+    <div class="edit-status">
+      <span class="undo-count">Deshacer: 12/50</span>
+      <button class="btn">Deshacer <span class="key-hint">Ctrl+Z</span></button>
+      <button class="btn">Rehacer <span class="key-hint">Ctrl+Shift+Z</span></button>
+    </div>
+  </div>
+
+  <div class="editor-container">
+    <div class="measure-numbers">
+      <div class="measure-num">1</div>
+      <div class="measure-num">2</div>
+      <div class="measure-num current">3</div>
+      <div class="measure-num">4</div>
+      <div class="measure-num">5</div>
+      <div class="measure-num">6</div>
+      <div class="measure-num">7</div>
+      <div class="measure-num">8</div>
+    </div>
+
+    <div class="tab-grid">
+      <!-- Measure 1 -->
+      <div class="tab-measure">
+        <div class="tab-string">
+          <div class="string-label">G</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"><span class="fret zero">0</span></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"><span class="fret">3</span></div>
+              <div class="tab-cell"></div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">D</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"></div>
+              <div class="tab-cell"><span class="fret">5</span></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"><span class="fret">5</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">A</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"></div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">E</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"><span class="fret">3</span></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"><span class="fret">3</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Measure 2 -->
+      <div class="tab-measure">
+        <div class="tab-string">
+          <div class="string-label">G</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"><span class="fret">5</span></div>
+              <div class="tab-cell"><span class="fret">5</span><span class="technique">h</span></div>
+              <div class="tab-cell"><span class="fret">7</span></div>
+              <div class="tab-cell"></div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">D</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"><span class="fret">7</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">A</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"></div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">E</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"><span class="fret">5</span></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"><span class="fret">7</span><span class="technique">/</span></div>
+              <div class="tab-cell"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Measure 3 (current) -->
+      <div class="tab-measure current">
+        <div class="tab-string">
+          <div class="string-label">G</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"><span class="fret">7</span></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell selected"><span class="fret">5</span><div class="cursor-line"></div></div>
+              <div class="tab-cell"><span class="fret">3</span><span class="technique">p</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">D</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"></div>
+              <div class="tab-cell"><span class="fret">5</span></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"></div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">A</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"><span class="fret">5</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">E</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"><span class="fret">7</span></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"><span class="fret">5</span><span class="technique">\</span></div>
+              <div class="tab-cell"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Measure 4 -->
+      <div class="tab-measure">
+        <div class="tab-string">
+          <div class="string-label">G</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"><span class="fret">3</span></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"><span class="fret">0</span></div>
+              <div class="tab-cell"></div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">D</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"></div>
+              <div class="tab-cell"><span class="fret">2</span></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"><span class="fret">0</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">A</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"><span class="fret">0</span></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"><span class="fret">2</span></div>
+              <div class="tab-cell"></div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">E</div>
+          <div class="string-line">
+            <div class="tab-cells">
+              <div class="tab-cell"></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"></div>
+              <div class="tab-cell"><span class="fret">0</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Measure 5-8 (empty) -->
+      <div class="tab-measure">
+        <div class="tab-string">
+          <div class="string-label">G</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">D</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">A</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">E</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+      </div>
+
+      <div class="tab-measure">
+        <div class="tab-string">
+          <div class="string-label">G</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">D</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">A</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">E</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+      </div>
+
+      <div class="tab-measure">
+        <div class="tab-string">
+          <div class="string-label">G</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">D</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">A</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">E</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+      </div>
+
+      <div class="tab-measure">
+        <div class="tab-string">
+          <div class="string-label">G</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">D</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">A</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+        <div class="tab-string">
+          <div class="string-label">E</div>
+          <div class="string-line"><div class="tab-cells">
+            <div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div><div class="tab-cell"></div>
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="statusbar">
+    <div class="statusbar-left">
+      <span>Compás 3 de 8</span>
+      <span>BPM: 132.0</span>
+      <span>Compás seleccionado: Celda G-3</span>
+    </div>
+    <span>Guardado automático</span>
+  </div>
+</div>
+
+</body>
+</html>
