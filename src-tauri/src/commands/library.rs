@@ -1,6 +1,5 @@
-use crate::models::song::{Library, Song};
+use crate::models::song::{ArtistName, AudioPath, Library, Song, SongId, SongTitle};
 use crate::persistence::storage;
-use std::path::Path;
 
 const LIBRARY_FILE: &str = "library.json";
 
@@ -15,19 +14,12 @@ fn save_library(library: &Library) -> Result<(), String> {
     storage::write_json(LIBRARY_FILE, library)
 }
 
-fn find_song_by_id<'a>(library: &'a Library, id: &str) -> Option<&'a Song> {
-    library.songs.iter().find(|s| s.id == id)
+fn find_song_by_id<'a>(library: &'a Library, id: &SongId) -> Option<&'a Song> {
+    library.songs.iter().find(|s| &s.id == id)
 }
 
-fn find_song_by_id_mut<'a>(library: &'a mut Library, id: &str) -> Option<&'a mut Song> {
-    library.songs.iter_mut().find(|s| s.id == id)
-}
-
-fn validate_audio_path(path: &str) -> Result<(), String> {
-    if !Path::new(path).exists() {
-        return Err("El archivo de audio no existe".to_string());
-    }
-    Ok(())
+fn find_song_by_id_mut<'a>(library: &'a mut Library, id: &SongId) -> Option<&'a mut Song> {
+    library.songs.iter_mut().find(|s| &s.id == id)
 }
 
 #[tauri::command]
@@ -45,8 +37,14 @@ pub fn get_library() -> Result<Library, String> {
 }
 
 #[tauri::command]
-pub fn add_song(title: String, artist: Option<String>, audio_path: String) -> Result<Song, String> {
-    validate_audio_path(&audio_path)?;
+pub fn add_song(
+    title: SongTitle,
+    artist: Option<ArtistName>,
+    audio_path: AudioPath,
+) -> Result<Song, String> {
+    if !audio_path.exists() {
+        return Err("El archivo de audio no existe".to_string());
+    }
 
     let mut library = load_library()?;
     let song = Song::new(title, artist, audio_path);
@@ -57,10 +55,10 @@ pub fn add_song(title: String, artist: Option<String>, audio_path: String) -> Re
 
 #[tauri::command]
 pub fn update_song(
-    id: String,
-    title: Option<String>,
-    artist: Option<String>,
-    audio_path: Option<String>,
+    id: SongId,
+    title: Option<SongTitle>,
+    artist: Option<ArtistName>,
+    audio_path: Option<AudioPath>,
 ) -> Result<Song, String> {
     let mut library = load_library()?;
     let song = find_song_by_id_mut(&mut library, &id)
@@ -73,7 +71,9 @@ pub fn update_song(
         song.artist = Some(a);
     }
     if let Some(path) = audio_path {
-        validate_audio_path(&path)?;
+        if !path.exists() {
+            return Err("El archivo de audio no existe".to_string());
+        }
         song.audio_path = path;
         song.audio_missing = false;
     }
@@ -85,7 +85,7 @@ pub fn update_song(
 }
 
 #[tauri::command]
-pub fn delete_song(id: String) -> Result<(), String> {
+pub fn delete_song(id: SongId) -> Result<(), String> {
     let mut library = load_library()?;
     library.songs.retain(|s| s.id != id);
     save_library(&library)?;
@@ -93,15 +93,17 @@ pub fn delete_song(id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn check_audio_exists(id: String) -> Result<bool, String> {
+pub fn check_audio_exists(id: SongId) -> Result<bool, String> {
     let library = load_library()?;
     let song = find_song_by_id(&library, &id).ok_or_else(|| "Canción no encontrada".to_string())?;
-    Ok(Path::new(&song.audio_path).exists())
+    Ok(song.audio_path.exists())
 }
 
 #[tauri::command]
-pub fn reassign_audio_path(id: String, new_path: String) -> Result<Song, String> {
-    validate_audio_path(&new_path)?;
+pub fn reassign_audio_path(id: SongId, new_path: AudioPath) -> Result<Song, String> {
+    if !new_path.exists() {
+        return Err("El archivo de audio no existe".to_string());
+    }
 
     let mut library = load_library()?;
     let song = find_song_by_id_mut(&mut library, &id)
