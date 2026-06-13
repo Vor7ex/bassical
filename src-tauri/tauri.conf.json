@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "bassical-temp",
+  "productName": "Bassical",
   "version": "0.1.0",
-  "identifier": "main",
+  "identifier": "com.vor7ex.bassical",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,9 +12,13 @@
   "app": {
     "windows": [
       {
-        "title": "bassical-temp",
-        "width": 800,
-        "height": 600
+        "title": "Bassical",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 1366,
+        "minHeight": 768,
+        "resizable": true,
+        "fullscreen": false
       }
     ],
     "security": {
