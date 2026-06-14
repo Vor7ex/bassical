@@ -5,18 +5,20 @@ mod models;
 mod parser;
 mod persistence;
 
-use commands::audio::AudioEngineState;
+use commands::audio::{AudioCacheState, AudioEngineState};
 use commands::library;
 use std::sync::Mutex;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let engine = audio::engine::AudioEngine::new();
+    let cache = audio::cache::AudioCacheManager::new();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AudioEngineState(Mutex::new(engine)))
+        .manage(AudioCacheState(cache))
         .invoke_handler(tauri::generate_handler![
             library::init_app,
             library::get_library,

@@ -9,7 +9,6 @@ import {
   getAudioPosition,
   getDecodeProgress,
   getDecodedPeaks,
-  cacheAudio,
 } from "@/lib/audio";
 
 export function useAudioPlayback(audioPath: string) {
@@ -84,7 +83,6 @@ export function useAudioPlayback(audioPath: string) {
     stopDecodePolling();
     await refreshPeaks();
     setDecodeProgress(1.0);
-    cacheAudio(audioPath).catch(() => {});
   }
 
   useEffect(() => {
