@@ -13,9 +13,12 @@ interface CanvasCtx {
   width: number;
   height: number;
   dpr: number;
+  peaks: number[];
+  positionMs: number;
+  durationMs: number;
 }
 
-function drawBars(c: CanvasCtx, peaks: number[]) {
+function drawBars(c: CanvasCtx) {
   const h = c.height * c.dpr;
   const barWidth = 2 * c.dpr;
   const gap = 1 * c.dpr;
@@ -24,37 +27,28 @@ function drawBars(c: CanvasCtx, peaks: number[]) {
   const centerY = h / 2;
 
   c.ctx.fillStyle = "oklch(0.45 0.10 155)";
-  for (let i = 0; i < numBars && i < peaks.length; i++) {
-    const peakIdx = Math.floor((i / numBars) * peaks.length);
-    const amplitude = peaks[peakIdx] * (h * 0.45);
+  for (let i = 0; i < numBars && i < c.peaks.length; i++) {
+    const peakIdx = Math.floor((i / numBars) * c.peaks.length);
+    const amplitude = c.peaks[peakIdx] * (h * 0.45);
     const x = i * totalBarWidth;
     c.ctx.fillRect(x, centerY - amplitude, barWidth, amplitude);
     c.ctx.fillRect(x, centerY, barWidth, amplitude);
   }
 }
 
-function drawPlayhead(c: CanvasCtx, positionMs: number, durationMs: number) {
+function drawPlayhead(c: CanvasCtx) {
   const h = c.height * c.dpr;
-  const playheadX = durationMs > 0 ? (positionMs / durationMs) * c.width : 0;
+  const playheadX =
+    c.durationMs > 0 ? (c.positionMs / c.durationMs) * c.width : 0;
   c.ctx.fillStyle = "oklch(0.72 0.18 155)";
   c.ctx.fillRect(playheadX - 1 * c.dpr, 0, 2 * c.dpr, h);
 }
 
-function renderFrame(
-  canvas: HTMLCanvasElement,
-  peaks: number[],
-  positionMs: number,
-  durationMs: number,
-  height: number,
-) {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  const dpr = window.devicePixelRatio || 1;
-  const c: CanvasCtx = { ctx, width: canvas.width, height, dpr };
-  ctx.clearRect(0, 0, c.width, c.height);
-  if (peaks.length === 0) return;
-  drawBars(c, peaks);
-  drawPlayhead(c, positionMs, durationMs);
+function renderFrame(c: CanvasCtx) {
+  c.ctx.clearRect(0, 0, c.width, c.height);
+  if (c.peaks.length === 0) return;
+  drawBars(c);
+  drawPlayhead(c);
 }
 
 export function WaveformView({
@@ -72,7 +66,20 @@ export function WaveformView({
   const draw = useCallback(
     (posMs: number) => {
       const canvas = canvasRef.current;
-      if (canvas) renderFrame(canvas, peaksRef.current, posMs, durationMs, height);
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const dpr = window.devicePixelRatio || 1;
+      const c: CanvasCtx = {
+        ctx,
+        width: canvas.width,
+        height,
+        dpr,
+        peaks: peaksRef.current,
+        positionMs: posMs,
+        durationMs,
+      };
+      renderFrame(c);
     },
     [height, durationMs],
   );

@@ -311,25 +311,121 @@ fn should_swap_buffer(decoded: usize, last_swap: usize, interval: usize) -> bool
     decoded > 0 && (last_swap == 0 || decoded - last_swap >= interval)
 }
 
-fn update_peaks_incremental(
-    peaks: &mut [f32],
-    chunk: &[f32],
+struct PeakUpdateContext {
     channels: usize,
     offset: usize,
     total_est: usize,
-) {
-    if total_est == 0 {
+}
+
+fn update_peaks_incremental(peaks: &mut [f32], chunk: &[f32], ctx: &PeakUpdateContext) {
+    if ctx.total_est == 0 {
         return;
     }
-    let frames = chunk.len() / channels;
+    let frames = chunk.len() / ctx.channels;
     for frame in 0..frames {
-        let mono: f32 = (0..channels)
-            .map(|c| chunk[frame * channels + c].abs())
+        let mono: f32 = (0..ctx.channels)
+            .map(|c| chunk[frame * ctx.channels + c].abs())
             .sum::<f32>()
-            / channels as f32;
-        let bin = ((offset + frame) * PEAK_BINS / total_est).min(PEAK_BINS - 1);
+            / ctx.channels as f32;
+        let bin = ((ctx.offset + frame) * PEAK_BINS / ctx.total_est).min(PEAK_BINS - 1);
         if mono > peaks[bin] {
             peaks[bin] = mono;
+        }
+    }
+}
+
+enum DecodeStatus {
+    Decoded(Vec<f32>),
+    EndOfStream,
+    Error(String),
+}
+
+fn decode_next(decoder: &mut StreamingDecoder) -> DecodeStatus {
+    match decoder.decode_chunk(8192) {
+        Ok(c) if c.is_empty() => DecodeStatus::EndOfStream,
+        Ok(c) => DecodeStatus::Decoded(c),
+        Err(e) => DecodeStatus::Error(e.to_string()),
+    }
+}
+
+struct DecodeLoop {
+    local_samples: Vec<f32>,
+    decoded_frames: usize,
+    last_swap_frames: usize,
+    channels: usize,
+    total_est: usize,
+    swap_interval: usize,
+    shared: Arc<SharedState>,
+}
+
+impl DecodeLoop {
+    fn new(shared: Arc<SharedState>) -> Self {
+        let channels = shared.channels.load(Ordering::Relaxed) as usize;
+        let total_est = shared.total_frames.load(Ordering::Relaxed) as usize;
+        let sample_rate = shared.source_rate.load(Ordering::Relaxed) as usize;
+        let swap_interval = (sample_rate * channels).max(44100 * 2);
+
+        DecodeLoop {
+            local_samples: Vec::new(),
+            decoded_frames: 0,
+            last_swap_frames: 0,
+            channels,
+            total_est,
+            swap_interval,
+            shared,
+        }
+    }
+
+    fn process_chunk(&mut self, chunk: &[f32]) {
+        let chunk_frames = chunk.len() / self.channels;
+
+        {
+            let mut peaks = self.shared.peaks.lock().unwrap();
+            update_peaks_incremental(
+                &mut peaks,
+                chunk,
+                &PeakUpdateContext {
+                    channels: self.channels,
+                    offset: self.decoded_frames,
+                    total_est: self.total_est,
+                },
+            );
+        }
+
+        self.local_samples.extend_from_slice(chunk);
+        self.decoded_frames += chunk_frames;
+
+        if should_swap_buffer(
+            self.decoded_frames,
+            self.last_swap_frames,
+            self.swap_interval,
+        ) {
+            let mut buf = self.shared.buffer.lock().unwrap();
+            *buf = Arc::new(self.local_samples.clone());
+            self.last_swap_frames = self.decoded_frames;
+        }
+
+        self.shared
+            .buffer_frames
+            .store(self.decoded_frames as u64, Ordering::Release);
+    }
+
+    fn finish(self) {
+        let mut buf = self.shared.buffer.lock().unwrap();
+        *buf = Arc::new(self.local_samples);
+        self.shared.peaks_ready.store(true, Ordering::Release);
+    }
+
+    fn run(&mut self, decoder: &mut StreamingDecoder, stop: &AtomicBool) {
+        while !stop.load(Ordering::Relaxed) {
+            match decode_next(decoder) {
+                DecodeStatus::Decoded(chunk) => self.process_chunk(&chunk),
+                DecodeStatus::EndOfStream => break,
+                DecodeStatus::Error(e) => {
+                    eprintln!("Error de decodificación: {}", e);
+                    break;
+                }
+            }
         }
     }
 }
@@ -343,54 +439,9 @@ fn run_decode_thread(path: String, shared: Arc<SharedState>, stop: Arc<AtomicBoo
         }
     };
 
-    let mut local_samples: Vec<f32> = Vec::new();
-    let channels = shared.channels.load(Ordering::Relaxed) as usize;
-    let total_est = shared.total_frames.load(Ordering::Relaxed) as usize;
-    let mut decoded_frames: usize = 0;
-    let mut last_swap_frames: usize = 0;
-    let sample_rate = shared.source_rate.load(Ordering::Relaxed) as usize;
-    let swap_interval = (sample_rate * channels).max(44100 * 2); // ~1 second minimum
-
-    loop {
-        if stop.load(Ordering::Relaxed) {
-            return;
-        }
-
-        let chunk = match decoder.decode_chunk(8192) {
-            Ok(c) if c.is_empty() => break,
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Error de decodificación: {}", e);
-                break;
-            }
-        };
-
-        let chunk_frames = chunk.len() / channels;
-
-        {
-            let mut peaks = shared.peaks.lock().unwrap();
-            update_peaks_incremental(&mut peaks, &chunk, channels, decoded_frames, total_est);
-        }
-
-        local_samples.extend_from_slice(&chunk);
-        decoded_frames += chunk_frames;
-
-        if should_swap_buffer(decoded_frames, last_swap_frames, swap_interval) {
-            let mut buf = shared.buffer.lock().unwrap();
-            *buf = Arc::new(local_samples.clone());
-            last_swap_frames = decoded_frames;
-        }
-
-        shared
-            .buffer_frames
-            .store(decoded_frames as u64, Ordering::Release);
-    }
-
-    {
-        let mut buf = shared.buffer.lock().unwrap();
-        *buf = Arc::new(local_samples);
-    }
-    shared.peaks_ready.store(true, Ordering::Release);
+    let mut decode_loop = DecodeLoop::new(shared);
+    decode_loop.run(&mut decoder, &stop);
+    decode_loop.finish();
 }
 
 macro_rules! create_audio_callback {
