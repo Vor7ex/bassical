@@ -17,7 +17,11 @@ interface ContextMenu {
   song: Song;
 }
 
-export function LibraryView() {
+interface LibraryViewProps {
+  onOpenSong?: (song: Song) => void;
+}
+
+export function LibraryView({ onOpenSong }: LibraryViewProps) {
   const songs = useLibraryStore((s) => s.songs);
   const selectedSongId = useLibraryStore((s) => s.selectedSongId);
   const setSelectedSongId = useLibraryStore((s) => s.setSelectedSongId);
@@ -130,6 +134,10 @@ export function LibraryView() {
       handleDeselect();
       setContextMenu(null);
     }
+    if (e.key === "Enter" && selectedSong && onOpenSong) {
+      e.preventDefault();
+      onOpenSong(selectedSong);
+    }
   }
 
   return (
@@ -143,6 +151,7 @@ export function LibraryView() {
         songs={filteredSongs}
         selectedSongId={selectedSongId}
         onSelect={setSelectedSongId}
+        onDoubleClick={(song) => onOpenSong?.(song)}
         onMissingClick={setMissingSong}
         onDeselect={handleDeselect}
         onContextMenu={handleContextMenu}
