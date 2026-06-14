@@ -4,6 +4,13 @@ export interface Song {
   id: string;
   title: string;
   artist: string | null;
+  album: string | null;
+  genre: string | null;
+  year: number | null;
+  tuning: string | null;
+  bpm: number | null;
+  difficulty: number | null;
+  tags: string[];
   audioPath: string;
   audioMissing: boolean;
   hasTab: boolean;

@@ -20,3 +20,4 @@ serde_json = "1"
 dirs = "6"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
+tauri-plugin-dialog = "2"

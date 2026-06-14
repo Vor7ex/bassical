@@ -9,6 +9,10 @@ export async function getLibrary(): Promise<Library> {
   return await invoke<Library>("get_library");
 }
 
+export async function getLibraryWithStatus(): Promise<Library> {
+  return await invoke<Library>("get_library_with_status");
+}
+
 export async function addSong(
   title: string,
   artist: string | undefined,
@@ -23,15 +27,33 @@ export async function addSong(
 
 export async function updateSong(
   id: string,
-  title?: string,
-  artist?: string,
-  audioPath?: string,
+  fields: {
+    title?: string;
+    artist?: string;
+    album?: string;
+    genre?: string;
+    year?: number;
+    tuning?: string;
+    bpm?: number;
+    difficulty?: number;
+    tags?: string[];
+    audioPath?: string;
+  },
 ): Promise<Song> {
   return await invoke<Song>("update_song", {
     id,
-    title: title ?? null,
-    artist: artist ?? null,
-    audioPath: audioPath ?? null,
+    update: {
+      title: fields.title ?? null,
+      artist: fields.artist ?? null,
+      album: fields.album ?? null,
+      genre: fields.genre ?? null,
+      year: fields.year ?? null,
+      tuning: fields.tuning ?? null,
+      bpm: fields.bpm ?? null,
+      difficulty: fields.difficulty ?? null,
+      tags: fields.tags ?? null,
+      audioPath: fields.audioPath ?? null,
+    },
   });
 }
 

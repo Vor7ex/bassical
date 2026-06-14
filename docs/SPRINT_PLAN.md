@@ -21,11 +21,11 @@ Plan de desarrollo para Bassical v1.0, una aplicación desktop para práctica de
 **Entregable**: App Tauri que abre, muestra UI básica, y guarda/lee un archivo JSON en AppData.
 
 ### Criterios de Aceptación
-- [ ] Frontend configurado con framework elegido + Tailwind + Zustand
-- [ ] Estructura de directorios implementada según documentación
-- [ ] Esquema JSON definido con `schema_version`
-- [ ] Comando IPC de prueba funcional (frontend → backend → frontend)
-- [ ] Persistencia en `%APPDATA%\Bassical\` funcionando
+- [X] Frontend configurado con framework elegido + Tailwind + Zustand
+- [X] Estructura de directorios implementada según documentación
+- [X] Esquema JSON definido con `schema_version`
+- [X] Comando IPC de prueba funcional (frontend → backend → frontend)
+- [X] Persistencia en `%APPDATA%\Bassical\` funcionando
 
 ---
 
@@ -43,12 +43,12 @@ Plan de desarrollo para Bassical v1.0, una aplicación desktop para práctica de
 **Entregable**: El usuario puede agregar canciones, ver su biblioteca, buscar, y los datos persisten entre sesiones.
 
 ### Criterios de Aceptación
-- [ ] RF-01.1: Registrar canción desde archivo de audio local
-- [ ] RF-01.2: Almacenar título, artista, ruta, timing points, tab, metadatos de práctica
-- [ ] RF-01.3: Notificar y permitir reasignar ruta de audio faltante
-- [ ] RF-01.4: Eliminar entradas de la biblioteca sin borrar audio original
-- [ ] RF-01.5: Buscar y filtrar por título o artista
-- [ ] RF-06.2: Guardado automático entre sesiones
+- [X] RF-01.1: Registrar canción desde archivo de audio local
+- [X] RF-01.2: Almacenar título, artista, ruta, timing points, tab, metadatos de práctica
+- [X] RF-01.3: Notificar y permitir reasignar ruta de audio faltante
+- [X] RF-01.4: Eliminar entradas de la biblioteca sin borrar audio original
+- [X] RF-01.5: Buscar y filtrar por título o artista
+- [X] RF-06.2: Guardado automático entre sesiones
 
 ---
 
