@@ -74,3 +74,17 @@ export interface PracticeData {
   preferredSpeed: number;
   lastPositionMs: number;
 }
+
+export interface AudioInfo {
+  durationMs: number;
+  sampleRate: number;
+  channels: number;
+  peaks: number[];
+}
+
+export interface AudioState {
+  audioInfo: AudioInfo | null;
+  isLoaded: boolean;
+  isLoading: boolean;
+  error: string | null;
+}

@@ -6,6 +6,7 @@ interface SongListProps {
   songs: Song[];
   selectedSongId: string | null;
   onSelect: (id: string) => void;
+  onDoubleClick: (song: Song) => void;
   onMissingClick: (song: Song) => void;
   onDeselect: () => void;
   onContextMenu: (e: React.MouseEvent, song: Song) => void;
@@ -19,7 +20,7 @@ const columns = [
   { field: null, label: "Estado", className: "w-[90px]" },
 ];
 
-export function SongList({ songs, selectedSongId, onSelect, onMissingClick, onDeselect, onContextMenu }: SongListProps) {
+export function SongList({ songs, selectedSongId, onSelect, onDoubleClick, onMissingClick, onDeselect, onContextMenu }: SongListProps) {
   const sortField = useLibraryStore((s) => s.sortField);
   const sortDirection = useLibraryStore((s) => s.sortDirection);
   const toggleSort = useLibraryStore((s) => s.toggleSort);
@@ -61,6 +62,7 @@ export function SongList({ songs, selectedSongId, onSelect, onMissingClick, onDe
               index={i}
               isSelected={song.id === selectedSongId}
               onSelect={onSelect}
+              onDoubleClick={onDoubleClick}
               onMissingClick={onMissingClick}
               onContextMenu={onContextMenu}
             />
