@@ -31,7 +31,7 @@ function App() {
   }, []);
 
   return (
-    <Layout>
+    <Layout showPlayerBar={currentView === "library"}>
       {currentView === "library" ? (
         <LibraryView onOpenSong={handleOpenSong} />
       ) : (

@@ -2,16 +2,13 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::State;
 
-use crate::audio::cache::AudioCacheManager;
-use crate::audio::engine::AudioEngine;
+use crate::audio::decoder::probe_file;
+use crate::audio::engine::{spawn_decoder_thread, AudioEngine};
 
 pub struct AudioEngineState(pub Mutex<AudioEngine>);
-pub struct AudioCacheState(pub AudioCacheManager);
 
 unsafe impl Send for AudioEngineState {}
 unsafe impl Sync for AudioEngineState {}
-unsafe impl Send for AudioCacheState {}
-unsafe impl Sync for AudioCacheState {}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -26,20 +23,26 @@ pub struct AudioInfo {
 pub fn load_audio(
     path: String,
     engine_state: State<AudioEngineState>,
-    cache_state: State<AudioCacheState>,
 ) -> Result<AudioInfo, String> {
-    let cached = cache_state.0.get_or_load(&path)?;
-    
-    let mut engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
-    engine.set_current_audio(cached.clone());
+    let metadata = probe_file(&path)?;
 
-    let peaks = cached.peaks.read().unwrap().clone();
+    let mut engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
+    let device_rate = engine.device_rate();
+
+    let streaming =
+        crate::audio::engine::StreamingState::new(metadata.clone(), engine.channels(), device_rate);
+    let streaming = std::sync::Arc::new(streaming);
+
+    engine.set_current_stream(streaming.clone());
+    drop(engine);
+
+    spawn_decoder_thread(path, streaming.clone());
 
     Ok(AudioInfo {
-        duration_ms: cached.metadata.duration_ms,
-        sample_rate: cached.metadata.sample_rate,
-        channels: cached.metadata.channels,
-        peaks,
+        duration_ms: metadata.duration_ms,
+        sample_rate: metadata.sample_rate,
+        channels: metadata.channels,
+        peaks: Vec::new(),
     })
 }
 
@@ -69,7 +72,7 @@ pub fn pause_audio(engine_state: State<AudioEngineState>) -> Result<(), String> 
 
 #[tauri::command]
 pub fn seek_audio(position_ms: f64, engine_state: State<AudioEngineState>) -> Result<(), String> {
-    let mut engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
+    let engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
     engine.seek(position_ms)
 }
 
@@ -95,10 +98,4 @@ pub fn get_audio_duration(engine_state: State<AudioEngineState>) -> Result<f64, 
 pub fn is_audio_playing(engine_state: State<AudioEngineState>) -> Result<bool, String> {
     let engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
     Ok(engine.is_playing())
-}
-
-#[tauri::command]
-pub fn cache_audio(_path: String) -> Result<(), String> {
-    // Ya no hace nada, el caché se maneja automáticamente en el backend
-    Ok(())
 }

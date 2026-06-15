@@ -1,7 +1,99 @@
 use crate::models::song::{ArtistName, AudioPath, Library, Song, SongId, SongTitle};
 use crate::persistence::storage;
+use std::fs::File;
+use std::path::Path;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::{MetadataOptions, StandardTag};
 
 const LIBRARY_FILE: &str = "library.json";
+
+#[derive(serde::Serialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SongMetadata {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub year: Option<String>,
+    pub genre: Option<String>,
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn extract_metadata(file_path: String) -> Result<SongMetadata, String> {
+    eprintln!("[extract_metadata] file_path: {}", file_path);
+    let path = Path::new(&file_path);
+    let src = File::open(path).map_err(|e| format!("No se pudo abrir el archivo: {}", e))?;
+    let mss = MediaSourceStream::new(Box::new(src), Default::default());
+
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+        eprintln!("[extract_metadata] extension: {}", ext);
+    }
+
+    let meta_opts: MetadataOptions = Default::default();
+    let fmt_opts: FormatOptions = Default::default();
+
+    let mut format = symphonia::default::get_probe()
+        .probe(&hint, mss, fmt_opts, meta_opts)
+        .map_err(|e| format!("Formato no soportado: {}", e))?;
+
+    eprintln!("[extract_metadata] format probed successfully");
+
+    let mut song_meta = SongMetadata::default();
+
+    match format.metadata().current() {
+        Some(rev) => {
+            eprintln!(
+                "[extract_metadata] metadata revision found, tags count: {}",
+                rev.media.tags.len()
+            );
+            for tag in &rev.media.tags {
+                eprintln!(
+                    "[extract_metadata] tag: key={:?}, std={:?}",
+                    tag.raw.key, tag.std
+                );
+                if let Some(ref std_tag) = tag.std {
+                    match std_tag {
+                        StandardTag::TrackTitle(s) => {
+                            if song_meta.title.is_none() {
+                                song_meta.title = Some(s.to_string());
+                            }
+                        }
+                        StandardTag::Artist(s) => {
+                            if song_meta.artist.is_none() {
+                                song_meta.artist = Some(s.to_string());
+                            }
+                        }
+                        StandardTag::Album(s) => {
+                            if song_meta.album.is_none() {
+                                song_meta.album = Some(s.to_string());
+                            }
+                        }
+                        StandardTag::ReleaseYear(y) => {
+                            if song_meta.year.is_none() {
+                                song_meta.year = Some(y.to_string());
+                            }
+                        }
+                        StandardTag::Genre(s) => {
+                            if song_meta.genre.is_none() {
+                                song_meta.genre = Some(s.to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        None => {
+            eprintln!("[extract_metadata] NO metadata revision found");
+        }
+    }
+
+    eprintln!("[extract_metadata] result: {:?}", song_meta);
+    Ok(song_meta)
+}
 
 #[derive(serde::Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -89,13 +181,19 @@ pub fn add_song(
     title: SongTitle,
     artist: Option<ArtistName>,
     audio_path: AudioPath,
+    album: Option<String>,
+    genre: Option<String>,
+    year: Option<u16>,
 ) -> Result<Song, String> {
     if !audio_path.exists() {
         return Err("El archivo de audio no existe".to_string());
     }
 
     let mut library = load_library()?;
-    let song = Song::new(title, artist, audio_path);
+    let mut song = Song::new(title, artist, audio_path);
+    song.album = album;
+    song.genre = genre;
+    song.year = year;
     library.songs.push(song.clone());
     save_library(&library)?;
     Ok(song)

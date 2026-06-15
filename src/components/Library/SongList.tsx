@@ -7,7 +7,6 @@ interface SongListProps {
   selectedSongId: string | null;
   onSelect: (id: string) => void;
   onDoubleClick: (song: Song) => void;
-  onMissingClick: (song: Song) => void;
   onDeselect: () => void;
   onContextMenu: (e: React.MouseEvent, song: Song) => void;
 }
@@ -16,18 +15,18 @@ const columns = [
   { field: null, label: "#", className: "w-[36px]" },
   { field: "title" as const, label: "Título" },
   { field: "artist" as const, label: "Artista" },
-  { field: "audioPath" as const, label: "Ruta del archivo" },
-  { field: null, label: "Estado", className: "w-[90px]" },
+  { field: "album" as const, label: "Álbum" },
+  { field: "bpm" as const, label: "BPM", className: "w-[80px]" },
 ];
 
-export function SongList({ songs, selectedSongId, onSelect, onDoubleClick, onMissingClick, onDeselect, onContextMenu }: SongListProps) {
+export function SongList({ songs, selectedSongId, onSelect, onDoubleClick, onDeselect, onContextMenu }: SongListProps) {
   const sortField = useLibraryStore((s) => s.sortField);
   const sortDirection = useLibraryStore((s) => s.sortDirection);
   const toggleSort = useLibraryStore((s) => s.toggleSort);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="grid grid-cols-[36px_minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,3fr)_90px] bg-bg-surface border-b border-border-subtle shrink-0 border-l-2 border-l-transparent">
+      <div className="grid grid-cols-[36px_minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,1.5fr)_80px] bg-bg-surface border-b border-border-subtle shrink-0 border-l-2 border-l-transparent">
         {columns.map((col) => (
           <div
             key={col.label}
@@ -63,7 +62,6 @@ export function SongList({ songs, selectedSongId, onSelect, onDoubleClick, onMis
               isSelected={song.id === selectedSongId}
               onSelect={onSelect}
               onDoubleClick={onDoubleClick}
-              onMissingClick={onMissingClick}
               onContextMenu={onContextMenu}
             />
           ))

@@ -1,5 +1,6 @@
 import { pickAudioFile } from "@/lib/dialog";
 import { addSong, deleteSong } from "@/lib/library";
+import { extractMetadata } from "@/lib/audio";
 import { useLibraryStore } from "@/lib/store";
 import type { Song } from "@/lib/types";
 import { useState } from "react";
@@ -8,9 +9,10 @@ interface LibraryToolbarProps {
   selectedSong: Song | null;
   onAddSong: () => void;
   onEditSong: () => void;
+  onOpenSong: () => void;
 }
 
-export function LibraryToolbar({ selectedSong, onAddSong, onEditSong }: LibraryToolbarProps) {
+export function LibraryToolbar({ selectedSong, onAddSong, onEditSong, onOpenSong }: LibraryToolbarProps) {
   const searchQuery = useLibraryStore((s) => s.searchQuery);
   const setSearchQuery = useLibraryStore((s) => s.setSearchQuery);
   const removeSongFromStore = useLibraryStore((s) => s.removeSongFromStore);
@@ -38,7 +40,13 @@ export function LibraryToolbar({ selectedSong, onAddSong, onEditSong }: LibraryT
     const path = await pickAudioFile();
     if (!path) return;
     const filename = path.split(/[/\\]/).pop() ?? "";
-    const nameWithoutExt = filename.replace(/\.[^.]+$/, "");
+    let nameWithoutExt = filename.replace(/\.[^.]+$/, "");
+    try {
+      const meta = await extractMetadata(path);
+      if (meta.title) nameWithoutExt = meta.title;
+    } catch {
+      console.error("[handleQuickAdd] extractMetadata failed, using filename");
+    }
     try {
       const song = await addSong(nameWithoutExt, undefined, path);
       addSongToStore(song);
@@ -56,6 +64,13 @@ export function LibraryToolbar({ selectedSong, onAddSong, onEditSong }: LibraryT
         + Agregar
       </button>
       <div className="w-px h-5 bg-border-subtle" />
+      <button
+        onClick={onOpenSong}
+        disabled={!selectedSong || selectedSong.audioMissing}
+        className="bg-accent text-bg-root px-3 h-7 text-caption rounded-sm border border-border-subtle hover:bg-accent-hover cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+      >
+        Abrir
+      </button>
       <button
         onClick={handleDelete}
         disabled={!selectedSong || isDeleting}

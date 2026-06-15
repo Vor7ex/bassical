@@ -22,4 +22,5 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 tauri-plugin-dialog = "2"
 cpal = "0.15"
-symphonia = { version = "0.5", features = ["mp3", "wav", "flac", "ogg"] }
+symphonia = { version = "0.6", features = ["mp3", "wav", "flac", "ogg"] }
+ringbuf = "0.4"

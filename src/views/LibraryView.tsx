@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { getLibraryWithStatus, deleteSong } from "@/lib/library";
-import { useLibraryStore } from "@/lib/store";
+import { useLibraryStore, useSessionStore } from "@/lib/store";
 import type { Song } from "@/lib/types";
 import {
   AddSongDialog,
@@ -31,6 +31,10 @@ export function LibraryView({ onOpenSong }: LibraryViewProps) {
   const searchQuery = useLibraryStore((s) => s.searchQuery);
   const sortField = useLibraryStore((s) => s.sortField);
   const sortDirection = useLibraryStore((s) => s.sortDirection);
+  
+  const setQueue = useSessionStore((s) => s.setQueue);
+  const setSessionSongId = useSessionStore((s) => s.setCurrentSongId);
+  const setIsPlaying = useSessionStore((s) => s.setIsPlaying);
 
   const filteredSongs = useMemo(() => {
     let list = songs;
@@ -43,8 +47,8 @@ export function LibraryView({ onOpenSong }: LibraryViewProps) {
       );
     }
     return [...list].sort((a, b) => {
-      const aVal = (a[sortField] ?? "").toLowerCase();
-      const bVal = (b[sortField] ?? "").toLowerCase();
+      const aVal = String(a[sortField as keyof Song] ?? "").toLowerCase();
+      const bVal = String(b[sortField as keyof Song] ?? "").toLowerCase();
       const cmp = aVal.localeCompare(bVal);
       return sortDirection === "asc" ? cmp : -cmp;
     });
@@ -134,10 +138,17 @@ export function LibraryView({ onOpenSong }: LibraryViewProps) {
       handleDeselect();
       setContextMenu(null);
     }
-    if (e.key === "Enter" && selectedSong && onOpenSong) {
+    if (e.key === "Enter" && selectedSong) {
       e.preventDefault();
-      onOpenSong(selectedSong);
+      handlePlayFromLibrary(selectedSong);
     }
+  }
+
+  function handlePlayFromLibrary(song: Song) {
+    if (song.audioMissing) return;
+    setQueue(filteredSongs.map(s => s.id));
+    setSessionSongId(song.id);
+    setIsPlaying(true);
   }
 
   return (
@@ -146,13 +157,13 @@ export function LibraryView({ onOpenSong }: LibraryViewProps) {
         selectedSong={selectedSong}
         onAddSong={() => setShowAddDialog(true)}
         onEditSong={handleEditSong}
+        onOpenSong={() => selectedSong && onOpenSong?.(selectedSong)}
       />
       <SongList
         songs={filteredSongs}
         selectedSongId={selectedSongId}
         onSelect={setSelectedSongId}
-        onDoubleClick={(song) => onOpenSong?.(song)}
-        onMissingClick={setMissingSong}
+        onDoubleClick={handlePlayFromLibrary}
         onDeselect={handleDeselect}
         onContextMenu={handleContextMenu}
       />
@@ -186,6 +197,17 @@ export function LibraryView({ onOpenSong }: LibraryViewProps) {
           >
             Eliminar
           </button>
+          {!contextMenu.song.audioMissing && (
+            <button
+              className="w-full text-left px-3 py-1.5 text-caption text-text-primary hover:bg-bg-surface cursor-pointer"
+              onClick={() => {
+                onOpenSong?.(contextMenu.song);
+                setContextMenu(null);
+              }}
+            >
+              Abrir Práctica
+            </button>
+          )}
           {contextMenu.song.audioMissing && (
             <button
               className="w-full text-left px-3 py-1.5 text-caption text-text-primary hover:bg-bg-surface cursor-pointer"

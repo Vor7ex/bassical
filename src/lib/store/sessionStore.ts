@@ -15,6 +15,10 @@ interface SessionState {
   audioState: AudioState | null;
   decodeProgress: number;
 
+  queue: string[];
+  isLooping: boolean;
+  isShuffle: boolean;
+
   setCurrentSongId: (id: string | null) => void;
   setIsPlaying: (playing: boolean) => void;
   setPlaybackSpeed: (speed: number) => void;
@@ -22,6 +26,11 @@ interface SessionState {
   setAudioState: (info: { durationMs: number; sampleRate: number; channels: number; peaks: number[] } | null) => void;
   updatePeaks: (peaks: number[]) => void;
   setDecodeProgress: (progress: number) => void;
+  setQueue: (queue: string[]) => void;
+  toggleLoop: () => void;
+  toggleShuffle: () => void;
+  playNext: () => void;
+  playPrevious: () => void;
   resetSession: () => void;
 }
 
@@ -32,6 +41,9 @@ const INITIAL_STATE = {
   currentPositionMs: 0,
   audioState: null,
   decodeProgress: 1.0,
+  queue: [],
+  isLooping: false,
+  isShuffle: false,
 };
 
 export const useSessionStore = create<SessionState>((set) => ({
@@ -59,5 +71,34 @@ export const useSessionStore = create<SessionState>((set) => ({
         : null,
     })),
   setDecodeProgress: (progress) => set({ decodeProgress: progress }),
+  setQueue: (queue) => set({ queue }),
+  toggleLoop: () => set((s) => ({ isLooping: !s.isLooping })),
+  toggleShuffle: () => set((s) => ({ isShuffle: !s.isShuffle })),
+  playNext: () =>
+    set((s) => {
+      if (s.queue.length === 0) return {};
+      if (s.isShuffle) {
+        const nextId = s.queue[Math.floor(Math.random() * s.queue.length)];
+        return { currentSongId: nextId };
+      }
+      const idx = s.queue.indexOf(s.currentSongId ?? "");
+      if (idx === -1 || idx === s.queue.length - 1) {
+        return s.isLooping ? { currentSongId: s.queue[0] } : {};
+      }
+      return { currentSongId: s.queue[idx + 1] };
+    }),
+  playPrevious: () =>
+    set((s) => {
+      if (s.queue.length === 0) return {};
+      if (s.isShuffle) {
+        const nextId = s.queue[Math.floor(Math.random() * s.queue.length)];
+        return { currentSongId: nextId };
+      }
+      const idx = s.queue.indexOf(s.currentSongId ?? "");
+      if (idx <= 0) {
+        return s.isLooping ? { currentSongId: s.queue[s.queue.length - 1] } : {};
+      }
+      return { currentSongId: s.queue[idx - 1] };
+    }),
   resetSession: () => set(INITIAL_STATE),
 }));

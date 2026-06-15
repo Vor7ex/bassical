@@ -7,6 +7,14 @@ export interface AudioInfo {
   peaks: number[];
 }
 
+export interface SongMetadata {
+  title?: string;
+  artist?: string;
+  album?: string;
+  year?: string;
+  genre?: string;
+}
+
 export async function loadAudio(path: string): Promise<AudioInfo> {
   return await invoke<AudioInfo>("load_audio", { path });
 }
@@ -47,6 +55,6 @@ export async function isAudioPlaying(): Promise<boolean> {
   return await invoke<boolean>("is_audio_playing");
 }
 
-export async function cacheAudio(path: string): Promise<void> {
-  return await invoke<void>("cache_audio", { path });
+export async function extractMetadata(filePath: string): Promise<SongMetadata> {
+  return await invoke<SongMetadata>("extract_metadata", { filePath });
 }
