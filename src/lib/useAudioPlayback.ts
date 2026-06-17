@@ -59,8 +59,10 @@ export function useAudioPlayback(audioPath: string) {
       });
 
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-      if (decodePollRef.current) clearInterval(decodePollRef.current);
+      if (decodePollRef.current) {
+        clearInterval(decodePollRef.current);
+        decodePollRef.current = null;
+      }
     };
   }, [audioPath, setAudioState, setDecodeProgress]);
 
