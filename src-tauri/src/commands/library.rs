@@ -19,6 +19,45 @@ pub struct SongMetadata {
     pub genre: Option<String>,
 }
 
+fn apply_standard_tag(meta: &mut SongMetadata, std_tag: &StandardTag) {
+    match std_tag {
+        StandardTag::TrackTitle(s) => {
+            if meta.title.is_none() {
+                meta.title = Some(s.to_string());
+            }
+        }
+        StandardTag::Artist(s) => {
+            if meta.artist.is_none() {
+                meta.artist = Some(s.to_string());
+            }
+        }
+        StandardTag::Album(s) => {
+            if meta.album.is_none() {
+                meta.album = Some(s.to_string());
+            }
+        }
+        StandardTag::ReleaseYear(y) => {
+            if meta.year.is_none() {
+                meta.year = Some(y.to_string());
+            }
+        }
+        StandardTag::Genre(s) => {
+            if meta.genre.is_none() {
+                meta.genre = Some(s.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn apply_tags_to_metadata(meta: &mut SongMetadata, tags: &[symphonia::core::meta::Tag]) {
+    for tag in tags {
+        if let Some(ref std_tag) = tag.std {
+            apply_standard_tag(meta, std_tag);
+        }
+    }
+}
+
 #[tauri::command(rename_all = "camelCase")]
 pub fn extract_metadata(file_path: String) -> Result<SongMetadata, String> {
     eprintln!("[extract_metadata] file_path: {}", file_path);
@@ -49,42 +88,7 @@ pub fn extract_metadata(file_path: String) -> Result<SongMetadata, String> {
                 "[extract_metadata] metadata revision found, tags count: {}",
                 rev.media.tags.len()
             );
-            for tag in &rev.media.tags {
-                eprintln!(
-                    "[extract_metadata] tag: key={:?}, std={:?}",
-                    tag.raw.key, tag.std
-                );
-                if let Some(ref std_tag) = tag.std {
-                    match std_tag {
-                        StandardTag::TrackTitle(s) => {
-                            if song_meta.title.is_none() {
-                                song_meta.title = Some(s.to_string());
-                            }
-                        }
-                        StandardTag::Artist(s) => {
-                            if song_meta.artist.is_none() {
-                                song_meta.artist = Some(s.to_string());
-                            }
-                        }
-                        StandardTag::Album(s) => {
-                            if song_meta.album.is_none() {
-                                song_meta.album = Some(s.to_string());
-                            }
-                        }
-                        StandardTag::ReleaseYear(y) => {
-                            if song_meta.year.is_none() {
-                                song_meta.year = Some(y.to_string());
-                            }
-                        }
-                        StandardTag::Genre(s) => {
-                            if song_meta.genre.is_none() {
-                                song_meta.genre = Some(s.to_string());
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            apply_tags_to_metadata(&mut song_meta, &rev.media.tags);
         }
         None => {
             eprintln!("[extract_metadata] NO metadata revision found");

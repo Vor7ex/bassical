@@ -187,18 +187,8 @@ impl StreamingDecoder {
         }
 
         if let Ok(decoded) = self.decoder.decode(packet) {
-            match decoded {
-                GenericAudioBufferRef::F32(buf) => {
-                    let planes: Vec<&[f32]> = buf.iter_planes().collect();
-                    let num_frames = buf.frames();
-                    let num_channels = planes.len();
-                    for frame_idx in 0..num_frames {
-                        for ch in 0..num_channels {
-                            samples.push(planes[ch][frame_idx]);
-                        }
-                    }
-                }
-                _ => {}
+            if let GenericAudioBufferRef::F32(buf) = decoded {
+                copy_f32_samples(&buf, samples);
             }
         }
     }
@@ -209,6 +199,17 @@ impl StreamingDecoder {
 
     pub fn channels(&self) -> usize {
         self.channels
+    }
+}
+
+fn copy_f32_samples(buf: &symphonia::core::audio::AudioBuffer<f32>, samples: &mut Vec<f32>) {
+    let planes: Vec<&[f32]> = buf.iter_planes().collect();
+    let num_frames = buf.frames();
+    let num_channels = planes.len();
+    for frame_idx in 0..num_frames {
+        for ch in 0..num_channels {
+            samples.push(planes[ch][frame_idx]);
+        }
     }
 }
 

@@ -576,6 +576,53 @@ pub fn spawn_decoder_thread(path: String, streaming: Arc<StreamingState>) {
     });
 }
 
+fn wait_until_playable(streaming: &StreamingState) -> bool {
+    while !streaming.is_playing.load(Ordering::Acquire) {
+        if streaming.decode_immediately.load(Ordering::Acquire) {
+            return true;
+        }
+        if streaming.is_seeking.load(Ordering::Acquire) {
+            return true;
+        }
+        if streaming.is_done.load(Ordering::Acquire) {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
+
+fn handle_seek_if_needed(
+    streaming: &StreamingState,
+    decoder: &mut StreamingDecoder,
+    prod: &mut ringbuf::CachingProd<Arc<HeapRb<f32>>>,
+    params: &mut DecodeParams,
+) {
+    if !streaming.decode_immediately.load(Ordering::Acquire) {
+        params.source_frames_decoded = handle_seek_if_requested(streaming, decoder);
+        swap_buffer_on_seek(streaming, prod);
+    }
+}
+
+fn decode_and_process_chunk(
+    decoder: &mut StreamingDecoder,
+    streaming: &StreamingState,
+    prod: &mut ringbuf::CachingProd<Arc<HeapRb<f32>>>,
+    params: &mut DecodeParams,
+) -> bool {
+    match decoder.decode_chunk(4096) {
+        Ok(chunk) if chunk.is_empty() => false,
+        Ok(chunk) => {
+            process_decoded_chunk(streaming, prod, &chunk, params);
+            !decoder.is_done()
+        }
+        Err(e) => {
+            eprintln!("Error de decodificación: {}", e);
+            false
+        }
+    }
+}
+
 fn run_decoder_thread(path: String, streaming: Arc<StreamingState>) {
     let mut decoder = match StreamingDecoder::open(&path) {
         Ok(d) => d,
@@ -605,36 +652,13 @@ fn run_decoder_thread(path: String, streaming: Arc<StreamingState>) {
     };
 
     loop {
-        while !streaming.is_playing.load(Ordering::Acquire) {
-            if streaming.decode_immediately.load(Ordering::Acquire) {
-                break;
-            }
-            if streaming.is_seeking.load(Ordering::Acquire) {
-                break;
-            }
-            if streaming.is_done.load(Ordering::Acquire) {
-                return;
-            }
-            thread::sleep(Duration::from_millis(10));
+        if !wait_until_playable(&streaming) {
+            break;
         }
 
-        if !streaming.decode_immediately.load(Ordering::Acquire) {
-            params.source_frames_decoded = handle_seek_if_requested(&streaming, &mut decoder);
-            swap_buffer_on_seek(&streaming, &mut prod);
-        }
+        handle_seek_if_needed(&streaming, &mut decoder, &mut prod, &mut params);
 
-        match decoder.decode_chunk(4096) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => {
-                process_decoded_chunk(&streaming, &mut prod, &chunk, &mut params);
-            }
-            Err(e) => {
-                eprintln!("Error de decodificación: {}", e);
-                break;
-            }
-        }
-
-        if decoder.is_done() {
+        if !decode_and_process_chunk(&mut decoder, &streaming, &mut prod, &mut params) {
             break;
         }
     }
