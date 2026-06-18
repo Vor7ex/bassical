@@ -17,11 +17,17 @@ export async function addSong(
   title: string,
   artist: string | undefined,
   audioPath: string,
+  album?: string,
+  genre?: string,
+  year?: number,
 ): Promise<Song> {
   return await invoke<Song>("add_song", {
     title,
     artist: artist ?? null,
     audioPath,
+    album: album ?? null,
+    genre: genre ?? null,
+    year: year ?? null,
   });
 }
 

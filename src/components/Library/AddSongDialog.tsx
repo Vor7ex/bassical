@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { pickAudioFile } from "@/lib/dialog";
 import { addSong } from "@/lib/library";
+import { extractMetadata } from "@/lib/audio";
 import { useLibraryStore } from "@/lib/store";
 
 interface AddSongDialogProps {
@@ -10,6 +11,9 @@ interface AddSongDialogProps {
 export function AddSongDialog({ onClose }: AddSongDialogProps) {
   const [title, setTitle] = useState("");
   const [artist, setArtist] = useState("");
+  const [album, setAlbum] = useState("");
+  const [genre, setGenre] = useState("");
+  const [year, setYear] = useState("");
   const [audioPath, setAudioPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
@@ -22,6 +26,29 @@ export function AddSongDialog({ onClose }: AddSongDialogProps) {
     setError(null);
     const filename = path.split(/[/\\]/).pop() ?? "";
     setTitle(filename.replace(/\.[^.]+$/, ""));
+
+    try {
+      console.log("[extractMetadata] Llamando con path:", path);
+      const metadata = await extractMetadata(path);
+      console.log("[extractMetadata] Resultado:", JSON.stringify(metadata, null, 2));
+      if (metadata.title && !title.trim()) {
+        setTitle(metadata.title);
+      }
+      if (metadata.artist) {
+        setArtist(metadata.artist);
+      }
+      if (metadata.album) {
+        setAlbum(metadata.album);
+      }
+      if (metadata.genre) {
+        setGenre(metadata.genre);
+      }
+      if (metadata.year) {
+        setYear(metadata.year);
+      }
+    } catch (e) {
+      console.error("[extractMetadata] Error:", e);
+    }
   }
 
   async function handleAdd() {
@@ -33,7 +60,15 @@ export function AddSongDialog({ onClose }: AddSongDialogProps) {
     setIsAdding(true);
     setError(null);
     try {
-      const song = await addSong(title.trim(), artist.trim() || undefined, audioPath);
+      const yearNum = year.trim() ? parseInt(year, 10) : undefined;
+      const song = await addSong(
+        title.trim(),
+        artist.trim() || undefined,
+        audioPath,
+        album.trim() || undefined,
+        genre.trim() || undefined,
+        yearNum,
+      );
       addSongToStore(song);
       onClose();
     } catch (e) {
@@ -105,6 +140,38 @@ export function AddSongDialog({ onClose }: AddSongDialogProps) {
               placeholder="Opcional"
               className="w-full bg-bg-input border border-border-subtle text-text-primary text-body px-3 h-8 rounded-sm placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-colors"
             />
+          </div>
+          <div>
+            <label className="block text-caption text-text-secondary mb-1.5">Álbum</label>
+            <input
+              type="text"
+              value={album}
+              onChange={(e) => setAlbum(e.target.value)}
+              placeholder="Opcional"
+              className="w-full bg-bg-input border border-border-subtle text-text-primary text-body px-3 h-8 rounded-sm placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-colors"
+            />
+          </div>
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="block text-caption text-text-secondary mb-1.5">Género</label>
+              <input
+                type="text"
+                value={genre}
+                onChange={(e) => setGenre(e.target.value)}
+                placeholder="Opcional"
+                className="w-full bg-bg-input border border-border-subtle text-text-primary text-body px-3 h-8 rounded-sm placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-colors"
+              />
+            </div>
+            <div className="w-24">
+              <label className="block text-caption text-text-secondary mb-1.5">Año</label>
+              <input
+                type="text"
+                value={year}
+                onChange={(e) => setYear(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                placeholder="Opcional"
+                className="w-full bg-bg-input border border-border-subtle text-text-primary text-body px-3 h-8 rounded-sm placeholder:text-text-tertiary focus:outline-none focus:border-accent transition-colors"
+              />
+            </div>
           </div>
           {error && <p className="text-caption text-text-danger">{error}</p>}
         </div>

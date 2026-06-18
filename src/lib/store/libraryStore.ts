@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { Song } from "@/lib/types";
 
-export type SortField = "title" | "artist" | "audioPath";
+export type SortField = "title" | "artist" | "album" | "bpm" | "audioPath";
 export type SortDirection = "asc" | "desc";
 
 interface LibraryState {
@@ -72,8 +72,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     }
 
     return [...filtered].sort((a, b) => {
-      const aVal = (a[sortField] ?? "").toLowerCase();
-      const bVal = (b[sortField] ?? "").toLowerCase();
+      const aVal = String(a[sortField as keyof Song] ?? "").toLowerCase();
+      const bVal = String(b[sortField as keyof Song] ?? "").toLowerCase();
       const cmp = aVal.localeCompare(bVal);
       return sortDirection === "asc" ? cmp : -cmp;
     });

@@ -26,7 +26,9 @@ pub fn run() {
             library::delete_song,
             library::check_audio_exists,
             library::reassign_audio_path,
+            library::extract_metadata,
             commands::audio::load_audio,
+            commands::audio::decode_audio,
             commands::audio::get_decode_progress,
             commands::audio::get_decoded_peaks,
             commands::audio::play_audio,
@@ -36,7 +38,8 @@ pub fn run() {
             commands::audio::get_audio_position,
             commands::audio::get_audio_duration,
             commands::audio::is_audio_playing,
-            commands::audio::cache_audio,
+            commands::audio::start_playback,
+            commands::audio::stop_playback,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

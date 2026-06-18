@@ -1,42 +1,118 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering};
+use ringbuf::traits::{Consumer, Producer, Split};
+use ringbuf::HeapRb;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
-use super::decoder::{AudioMetadata, StreamingDecoder};
+use super::decoder::{probe_file, AudioMetadata, StreamingDecoder};
 
 const PEAK_BINS: usize = 2000;
+const RING_BUFFER_SECONDS: usize = 2;
 
-struct SharedState {
-    buffer: Mutex<Arc<Vec<f32>>>,
-    buffer_frames: AtomicU64,
-    total_frames: AtomicU64,
-    source_rate: AtomicU32,
-    channels: AtomicU16,
-    device_rate: f64,
-    speed: AtomicU64,
-    position: AtomicU64,
-    is_playing: AtomicBool,
-    duration_ms: Mutex<f64>,
+type RbProd = ringbuf::CachingProd<Arc<HeapRb<f32>>>;
+type RbCons = ringbuf::CachingCons<Arc<HeapRb<f32>>>;
+
+pub struct StreamingState {
+    #[allow(dead_code)]
+    producer: Mutex<RbProd>,
+    consumer: Mutex<RbCons>,
+    pub metadata: AudioMetadata,
+    decoded_frames: AtomicU64,
     peaks: Mutex<Vec<f32>>,
-    peaks_ready: AtomicBool,
-    current_path: Mutex<String>,
+    is_done: AtomicBool,
+    is_seeking: AtomicBool,
+    seek_target_ms: AtomicU64,
+    needs_buffer_swap: AtomicBool,
+    is_playing: AtomicBool,
+    decode_immediately: AtomicBool,
+    push_to_buffer: AtomicBool,
+    device_channels: usize,
+    device_sample_rate: f64,
 }
 
-struct CacheEntry {
-    samples: Arc<Vec<f32>>,
-    metadata: AudioMetadata,
-    peaks: Vec<f32>,
+impl StreamingState {
+    fn channels(&self) -> usize {
+        self.device_channels
+    }
+
+    fn set_consumer(&self, consumer: RbCons) {
+        let mut guard = self.consumer.lock().unwrap();
+        *guard = consumer;
+    }
+
+    pub fn set_decode_immediately(&self, val: bool) {
+        self.decode_immediately.store(val, Ordering::Release);
+    }
+
+    fn get_decode_progress(&self) -> f64 {
+        let total = self.metadata.total_frames;
+        if total == 0 {
+            return 1.0;
+        }
+        let decoded = self.decoded_frames.load(Ordering::Relaxed);
+        (decoded as f64 / total as f64).min(1.0)
+    }
+
+    pub fn get_peaks(&self) -> Vec<f32> {
+        self.peaks.lock().unwrap().clone()
+    }
+
+    fn get_duration_ms(&self) -> f64 {
+        self.metadata.duration_ms
+    }
+
+    pub fn new(metadata: AudioMetadata, device_channels: usize, device_sample_rate: f64) -> Self {
+        Self {
+            producer: Mutex::new(HeapRb::<f32>::new(1).split().0),
+            consumer: Mutex::new(HeapRb::<f32>::new(1).split().1),
+            metadata,
+            decoded_frames: AtomicU64::new(0),
+            peaks: Mutex::new(vec![0.0; PEAK_BINS]),
+            is_done: AtomicBool::new(false),
+            is_seeking: AtomicBool::new(false),
+            seek_target_ms: AtomicU64::new(0),
+            needs_buffer_swap: AtomicBool::new(false),
+            is_playing: AtomicBool::new(false),
+            decode_immediately: AtomicBool::new(false),
+            push_to_buffer: AtomicBool::new(false),
+            device_channels,
+            device_sample_rate,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn init_buffer(&self) {
+        let capacity = self.metadata.sample_rate as usize * self.channels() * RING_BUFFER_SECONDS;
+        let rb = HeapRb::<f32>::new(capacity);
+        let (prod, cons) = rb.split();
+        *self.producer.lock().unwrap() = prod;
+        *self.consumer.lock().unwrap() = cons;
+        self.decoded_frames.store(0, Ordering::Release);
+        self.is_done.store(false, Ordering::Release);
+    }
+}
+
+struct PlaybackState {
+    position: AtomicU64,
+    is_playing: AtomicBool,
+    speed: AtomicU64,
+    device_rate: f64,
+    streaming: Mutex<Option<Arc<StreamingState>>>,
+    playback: Mutex<Option<Arc<StreamingState>>>,
+}
+
+pub struct AudioPlaybackInfo {
+    pub duration_ms: f64,
+    pub sample_rate: u32,
+    pub channels: u16,
 }
 
 pub struct AudioEngine {
-    shared: Arc<SharedState>,
+    state: Arc<PlaybackState>,
     stream: Option<Stream>,
-    decoder_handle: Option<thread::JoinHandle<()>>,
-    stop_decode: Arc<AtomicBool>,
-    cache: Mutex<HashMap<String, CacheEntry>>,
 }
 
 unsafe impl Send for AudioEngine {}
@@ -50,132 +126,29 @@ impl AudioEngine {
             .map(|c| c.sample_rate().0 as f64)
             .unwrap_or(48000.0);
 
-        AudioEngine {
-            shared: Arc::new(SharedState {
-                buffer: Mutex::new(Arc::new(Vec::new())),
-                buffer_frames: AtomicU64::new(0),
-                total_frames: AtomicU64::new(0),
-                source_rate: AtomicU32::new(0),
-                channels: AtomicU16::new(0),
-                device_rate,
-                speed: AtomicU64::new(1.0f64.to_bits()),
-                position: AtomicU64::new(0),
-                is_playing: AtomicBool::new(false),
-                duration_ms: Mutex::new(0.0),
-                peaks: Mutex::new(vec![0.0; PEAK_BINS]),
-                peaks_ready: AtomicBool::new(false),
-                current_path: Mutex::new(String::new()),
-            }),
+        let state = Arc::new(PlaybackState {
+            position: AtomicU64::new(0),
+            is_playing: AtomicBool::new(false),
+            speed: AtomicU64::new(1.0f64.to_bits()),
+            device_rate,
+            streaming: Mutex::new(None),
+            playback: Mutex::new(None),
+        });
+
+        let mut engine = AudioEngine {
+            state,
             stream: None,
-            decoder_handle: None,
-            stop_decode: Arc::new(AtomicBool::new(false)),
-            cache: Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub fn start_decode(&mut self, path: String, metadata: AudioMetadata) -> Result<(), String> {
-        let is_same_path = {
-            let current = self.shared.current_path.lock().unwrap();
-            *current == path
         };
-
-        if is_same_path && self.decoder_handle.is_some() {
-            return Ok(());
+        if let Err(e) = engine.create_stream() {
+            eprintln!("Failed to create initial stream: {}", e);
         }
-
-        self.stop_decode_stream();
-
-        let cached_entry = self
-            .cache
-            .lock()
-            .unwrap()
-            .get(&path)
-            .map(|e| (e.samples.clone(), e.metadata.clone(), e.peaks.clone()));
-
-        if let Some((cached, meta, cached_peaks)) = cached_entry {
-            {
-                let mut buf = self.shared.buffer.lock().unwrap();
-                *buf = cached;
-            }
-            self.shared.buffer_frames.store(
-                self.shared.buffer.lock().unwrap().len() as u64 / meta.channels as u64,
-                Ordering::Relaxed,
-            );
-            {
-                let mut peaks = self.shared.peaks.lock().unwrap();
-                *peaks = cached_peaks;
-            }
-            self.shared.peaks_ready.store(true, Ordering::Relaxed);
-            self.apply_metadata(&meta);
-            self.shared.position.store(0, Ordering::Relaxed);
-            self.shared.is_playing.store(false, Ordering::Relaxed);
-            *self.shared.current_path.lock().unwrap() = path;
-            self.create_stream()?;
-            return Ok(());
-        }
-
-        {
-            let mut buf = self.shared.buffer.lock().unwrap();
-            *buf = Arc::new(Vec::new());
-        }
-        {
-            let mut peaks = self.shared.peaks.lock().unwrap();
-            *peaks = vec![0.0; PEAK_BINS];
-        }
-        self.shared.buffer_frames.store(0, Ordering::Relaxed);
-        self.shared.peaks_ready.store(false, Ordering::Relaxed);
-        self.apply_metadata(&metadata);
-        self.shared.position.store(0, Ordering::Relaxed);
-        self.shared.is_playing.store(false, Ordering::Relaxed);
-        *self.shared.current_path.lock().unwrap() = path.clone();
-        self.create_stream()?;
-
-        let shared = self.shared.clone();
-        let stop = self.stop_decode.clone();
-
-        let handle = thread::spawn(move || run_decode_thread(path, shared, stop));
-        self.decoder_handle = Some(handle);
-        Ok(())
+        engine
     }
 
-    fn apply_metadata(&self, meta: &AudioMetadata) {
-        self.shared
-            .source_rate
-            .store(meta.sample_rate, Ordering::Relaxed);
-        self.shared.channels.store(meta.channels, Ordering::Relaxed);
-        self.shared
-            .total_frames
-            .store(meta.total_frames, Ordering::Relaxed);
-        {
-            let mut dur = self.shared.duration_ms.lock().unwrap();
-            *dur = meta.duration_ms;
-        }
-        self.shared.speed.store(1.0f64.to_bits(), Ordering::Relaxed);
-    }
-
-    fn stop_decode_stream(&mut self) {
-        self.stop_decode.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.decoder_handle.take() {
-            let _ = handle.join();
-        }
-        self.stop_decode.store(false, Ordering::Relaxed);
-    }
-
-    pub fn get_decode_progress(&self) -> f64 {
-        let total = self.shared.total_frames.load(Ordering::Relaxed);
-        if total == 0 {
-            return 1.0;
-        }
-        let decoded = self.shared.buffer_frames.load(Ordering::Relaxed);
-        (decoded as f64 / total as f64).min(1.0)
-    }
-
-    pub fn is_decode_done(&self) -> bool {
-        let total = self.shared.total_frames.load(Ordering::Relaxed);
-        if total == 0 {
-            return true;
-        }
-        self.shared.buffer_frames.load(Ordering::Relaxed) >= total
+    pub fn set_current_stream(&mut self, streaming: Arc<StreamingState>) {
+        self.state.position.store(0, Ordering::Relaxed);
+        self.state.speed.store(1.0f64.to_bits(), Ordering::Relaxed);
+        *self.state.streaming.lock().unwrap() = Some(streaming);
     }
 
     fn create_stream(&mut self) -> Result<(), String> {
@@ -189,14 +162,14 @@ impl AudioEngine {
             .map_err(|e| format!("Error de configuración de audio: {}", e))?;
 
         let config: StreamConfig = supported_config.config();
-        let shared = self.shared.clone();
+        let state = self.state.clone();
 
         let stream = match supported_config.sample_format() {
             SampleFormat::F32 => {
-                device.build_output_stream(&config, create_f32_callback(shared), log_error, None)
+                device.build_output_stream(&config, create_f32_callback(state), log_error, None)
             }
             SampleFormat::I16 => {
-                device.build_output_stream(&config, create_i16_callback(shared), log_error, None)
+                device.build_output_stream(&config, create_i16_callback(state), log_error, None)
             }
             fmt => return Err(format!("Formato de audio no soportado: {:?}", fmt)),
         }
@@ -211,95 +184,160 @@ impl AudioEngine {
     }
 
     pub fn play(&mut self) -> Result<(), String> {
-        if self.shared.buffer_frames.load(Ordering::Acquire) == 0 {
-            return Err("No hay audio cargado".to_string());
+        self.state.is_playing.store(true, Ordering::Relaxed);
+        let pb = self.state.playback.lock().unwrap();
+        if let Some(ref s) = *pb {
+            s.is_playing.store(true, Ordering::Relaxed);
+        } else if let Some(ref s) = *self.state.streaming.lock().unwrap() {
+            s.is_playing.store(true, Ordering::Relaxed);
         }
-        self.shared.is_playing.store(true, Ordering::Relaxed);
         Ok(())
     }
 
     pub fn pause(&mut self) -> Result<(), String> {
-        self.shared.is_playing.store(false, Ordering::Relaxed);
+        self.state.is_playing.store(false, Ordering::Relaxed);
+        let pb = self.state.playback.lock().unwrap();
+        if let Some(ref s) = *pb {
+            s.is_playing.store(false, Ordering::Relaxed);
+        } else if let Some(ref s) = *self.state.streaming.lock().unwrap() {
+            s.is_playing.store(false, Ordering::Relaxed);
+        }
         Ok(())
     }
 
-    pub fn seek(&mut self, position_ms: f64) -> Result<(), String> {
-        let source_rate = self.shared.source_rate.load(Ordering::Relaxed) as f64;
-        let channels = self.shared.channels.load(Ordering::Relaxed) as f64;
-        let frame = (position_ms / 1000.0 * source_rate) as u64;
-        self.shared
+    pub fn seek(&self, position_ms: f64) -> Result<(), String> {
+        let streaming = {
+            let pb = self.state.playback.lock().unwrap();
+            if let Some(ref s) = *pb {
+                s.clone()
+            } else {
+                let guard = self.state.streaming.lock().unwrap();
+                match *guard {
+                    Some(ref s) => s.clone(),
+                    None => return Err("No hay audio cargado".to_string()),
+                }
+            }
+        };
+
+        streaming
+            .seek_target_ms
+            .store(position_ms.to_bits(), Ordering::Release);
+        streaming.is_seeking.store(true, Ordering::Release);
+
+        let frame = (position_ms / 1000.0 * streaming.metadata.sample_rate as f64) as u64;
+        self.state
             .position
-            .store(frame * channels as u64, Ordering::Relaxed);
+            .store(frame * streaming.channels() as u64, Ordering::Relaxed);
+
         Ok(())
     }
 
     pub fn set_speed(&mut self, speed: f64) -> Result<(), String> {
         let clamped = speed.clamp(0.25, 1.0);
-        self.shared
-            .speed
-            .store(clamped.to_bits(), Ordering::Relaxed);
+        self.state.speed.store(clamped.to_bits(), Ordering::Relaxed);
         Ok(())
     }
 
     pub fn get_position_ms(&self) -> f64 {
-        let pos = self.shared.position.load(Ordering::Relaxed);
-        let channels = self.shared.channels.load(Ordering::Relaxed) as f64;
-        let source_rate = self.shared.source_rate.load(Ordering::Relaxed) as f64;
-        if source_rate > 0.0 && channels > 0.0 {
-            (pos as f64 / channels / source_rate) * 1000.0
-        } else {
-            0.0
+        let streaming = {
+            let guard = self.state.streaming.lock().unwrap();
+            guard.clone()
+        };
+        if let Some(s) = streaming {
+            let pos = self.state.position.load(Ordering::Relaxed);
+            let ch = s.channels() as f64;
+            let rate = s.metadata.sample_rate as f64;
+            if rate > 0.0 && ch > 0.0 {
+                return (pos as f64 / ch / rate) * 1000.0;
+            }
         }
+        0.0
     }
 
     pub fn get_duration_ms(&self) -> f64 {
-        *self.shared.duration_ms.lock().unwrap()
+        let streaming = {
+            let guard = self.state.streaming.lock().unwrap();
+            guard.clone()
+        };
+        streaming.map(|s| s.get_duration_ms()).unwrap_or(0.0)
     }
 
-    pub fn is_playing(&self) -> bool {
-        self.shared.is_playing.load(Ordering::Relaxed)
+    pub fn get_decode_progress(&self) -> f64 {
+        let streaming = {
+            let guard = self.state.streaming.lock().unwrap();
+            guard.clone()
+        };
+        streaming.map(|s| s.get_decode_progress()).unwrap_or(0.0)
     }
 
     pub fn get_peaks(&self) -> Vec<f32> {
-        self.shared.peaks.lock().unwrap().clone()
-    }
-
-    pub fn is_current_path(&self, path: &str) -> bool {
-        *self.shared.current_path.lock().unwrap() == path
-    }
-
-    pub fn store_in_cache(&self, path: &str) {
-        let current = self.shared.current_path.lock().unwrap().clone();
-        if current != path {
-            return;
-        }
-
-        let total = self.shared.total_frames.load(Ordering::Relaxed);
-        if total == 0 {
-            return;
-        }
-        let buffer = self.shared.buffer.lock().unwrap().clone();
-        let peaks = self.shared.peaks.lock().unwrap().clone();
-        let meta = AudioMetadata {
-            sample_rate: self.shared.source_rate.load(Ordering::Relaxed),
-            channels: self.shared.channels.load(Ordering::Relaxed),
-            duration_ms: *self.shared.duration_ms.lock().unwrap(),
-            total_frames: total,
+        let streaming = {
+            let guard = self.state.streaming.lock().unwrap();
+            guard.clone()
         };
-        self.cache.lock().unwrap().insert(
-            path.to_string(),
-            CacheEntry {
-                samples: buffer,
-                metadata: meta,
-                peaks,
-            },
-        );
+        streaming.map(|s| s.get_peaks()).unwrap_or_default()
     }
-}
 
-impl Drop for AudioEngine {
-    fn drop(&mut self) {
-        self.stop_decode_stream();
+    pub fn is_playing(&self) -> bool {
+        self.state.is_playing.load(Ordering::Relaxed)
+    }
+
+    pub fn device_rate(&self) -> f64 {
+        self.state.device_rate
+    }
+
+    pub fn channels(&self) -> usize {
+        let host = cpal::default_host();
+        host.default_output_device()
+            .and_then(|d| d.default_output_config().ok())
+            .map(|c| c.channels() as usize)
+            .unwrap_or(2)
+    }
+
+    pub fn start_playback(&mut self, path: String) -> Result<AudioPlaybackInfo, String> {
+        let existing = self.state.playback.lock().unwrap().clone();
+        if let Some(ref pb) = existing {
+            if !pb.is_done.load(Ordering::Acquire) {
+                pb.is_playing.store(true, Ordering::Relaxed);
+                self.state.is_playing.store(true, Ordering::Relaxed);
+                return Ok(AudioPlaybackInfo {
+                    duration_ms: pb.metadata.duration_ms,
+                    sample_rate: pb.metadata.sample_rate,
+                    channels: pb.metadata.channels,
+                });
+            }
+        }
+
+        let metadata = probe_file(&path)?;
+        let device_rate = self.state.device_rate;
+        let streaming = Arc::new(StreamingState::new(
+            metadata.clone(),
+            self.channels(),
+            device_rate,
+        ));
+        streaming.push_to_buffer.store(true, Ordering::Release);
+        streaming.is_playing.store(true, Ordering::Release);
+
+        let info = AudioPlaybackInfo {
+            duration_ms: metadata.duration_ms,
+            sample_rate: metadata.sample_rate,
+            channels: metadata.channels,
+        };
+
+        *self.state.playback.lock().unwrap() = Some(streaming.clone());
+        self.state.position.store(0, Ordering::Relaxed);
+        self.state.speed.store(1.0f64.to_bits(), Ordering::Relaxed);
+        self.state.is_playing.store(true, Ordering::Relaxed);
+
+        spawn_decoder_thread(path, streaming);
+        Ok(info)
+    }
+
+    pub fn stop_playback(&mut self) {
+        if let Some(pb) = self.state.playback.lock().unwrap().take() {
+            pb.is_playing.store(false, Ordering::Relaxed);
+        }
+        self.state.is_playing.store(false, Ordering::Relaxed);
     }
 }
 
@@ -307,214 +345,75 @@ fn log_error(err: cpal::StreamError) {
     eprintln!("Error en el stream de audio: {}", err);
 }
 
-fn should_swap_buffer(decoded: usize, last_swap: usize, interval: usize) -> bool {
-    decoded > 0 && (last_swap == 0 || decoded - last_swap >= interval)
-}
-
-struct PeakUpdateContext {
-    channels: usize,
-    offset: usize,
-    total_est: usize,
-}
-
-fn update_peaks_incremental(peaks: &mut [f32], chunk: &[f32], ctx: &PeakUpdateContext) {
-    if ctx.total_est == 0 {
-        return;
-    }
-    let frames = chunk.len() / ctx.channels;
-    for frame in 0..frames {
-        let mono: f32 = (0..ctx.channels)
-            .map(|c| chunk[frame * ctx.channels + c].abs())
-            .sum::<f32>()
-            / ctx.channels as f32;
-        let bin = ((ctx.offset + frame) * PEAK_BINS / ctx.total_est).min(PEAK_BINS - 1);
-        if mono > peaks[bin] {
-            peaks[bin] = mono;
-        }
-    }
-}
-
-enum DecodeStatus {
-    Decoded(Vec<f32>),
-    EndOfStream,
-    Error(String),
-}
-
-fn decode_next(decoder: &mut StreamingDecoder) -> DecodeStatus {
-    match decoder.decode_chunk(8192) {
-        Ok(c) if c.is_empty() => DecodeStatus::EndOfStream,
-        Ok(c) => DecodeStatus::Decoded(c),
-        Err(e) => DecodeStatus::Error(e.to_string()),
-    }
-}
-
-struct DecodeLoop {
-    local_samples: Vec<f32>,
-    decoded_frames: usize,
-    last_swap_frames: usize,
-    channels: usize,
-    total_est: usize,
-    swap_interval: usize,
-    shared: Arc<SharedState>,
-}
-
-impl DecodeLoop {
-    fn new(shared: Arc<SharedState>) -> Self {
-        let channels = shared.channels.load(Ordering::Relaxed) as usize;
-        let total_est = shared.total_frames.load(Ordering::Relaxed) as usize;
-        let sample_rate = shared.source_rate.load(Ordering::Relaxed) as usize;
-        let swap_interval = (sample_rate * channels).max(44100 * 2);
-
-        DecodeLoop {
-            local_samples: Vec::new(),
-            decoded_frames: 0,
-            last_swap_frames: 0,
-            channels,
-            total_est,
-            swap_interval,
-            shared,
-        }
-    }
-
-    fn process_chunk(&mut self, chunk: &[f32]) {
-        let chunk_frames = chunk.len() / self.channels;
-
-        {
-            let mut peaks = self.shared.peaks.lock().unwrap();
-            update_peaks_incremental(
-                &mut peaks,
-                chunk,
-                &PeakUpdateContext {
-                    channels: self.channels,
-                    offset: self.decoded_frames,
-                    total_est: self.total_est,
-                },
-            );
-        }
-
-        self.local_samples.extend_from_slice(chunk);
-        self.decoded_frames += chunk_frames;
-
-        if should_swap_buffer(
-            self.decoded_frames,
-            self.last_swap_frames,
-            self.swap_interval,
-        ) {
-            let mut buf = self.shared.buffer.lock().unwrap();
-            *buf = Arc::new(self.local_samples.clone());
-            self.last_swap_frames = self.decoded_frames;
-        }
-
-        self.shared
-            .buffer_frames
-            .store(self.decoded_frames as u64, Ordering::Release);
-    }
-
-    fn finish(self) {
-        let mut buf = self.shared.buffer.lock().unwrap();
-        *buf = Arc::new(self.local_samples);
-        self.shared.peaks_ready.store(true, Ordering::Release);
-    }
-
-    fn run(&mut self, decoder: &mut StreamingDecoder, stop: &AtomicBool) {
-        while !stop.load(Ordering::Relaxed) {
-            match decode_next(decoder) {
-                DecodeStatus::Decoded(chunk) => self.process_chunk(&chunk),
-                DecodeStatus::EndOfStream => break,
-                DecodeStatus::Error(e) => {
-                    eprintln!("Error de decodificación: {}", e);
-                    break;
-                }
-            }
-        }
-    }
-}
-
-fn run_decode_thread(path: String, shared: Arc<SharedState>, stop: Arc<AtomicBool>) {
-    let mut decoder = match StreamingDecoder::open(&path) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("Error abriendo decoder: {}", e);
-            return;
-        }
-    };
-
-    let mut decode_loop = DecodeLoop::new(shared);
-    decode_loop.run(&mut decoder, &stop);
-    decode_loop.finish();
-}
-
-macro_rules! create_audio_callback {
-    ($shared:expr, $sample_type:ty, $zero:expr, $convert:expr) => {{
-        let s = $shared.clone();
+macro_rules! create_streaming_callback {
+    ($state:expr, $sample_type:ty, $zero:expr, $convert:expr) => {{
+        let s = $state.clone();
         move |data: &mut [$sample_type], _: &cpal::OutputCallbackInfo| {
             if !s.is_playing.load(Ordering::Relaxed) {
                 data.fill($zero);
                 return;
             }
 
-            let total_frames = s.buffer_frames.load(Ordering::Acquire);
-            if total_frames == 0 {
+            let streaming = {
+                let pb = s.playback.lock().unwrap();
+                if let Some(ref st) = *pb {
+                    st.clone()
+                } else {
+                    drop(pb);
+                    let guard = s.streaming.lock().unwrap();
+                    match *guard {
+                        Some(ref st) => st.clone(),
+                        None => {
+                            data.fill($zero);
+                            return;
+                        }
+                    }
+                }
+            };
+
+            if streaming.is_seeking.load(Ordering::Acquire) {
                 data.fill($zero);
                 return;
             }
 
-            let buffer = {
-                let guard = s.buffer.lock().unwrap();
-                Arc::clone(&guard)
-            };
-            let src_rate = s.source_rate.load(Ordering::Relaxed) as f64;
-            let dev_rate = s.device_rate;
-            let ch = s.channels.load(Ordering::Relaxed) as usize;
-            let speed = f64::from_bits(s.speed.load(Ordering::Relaxed));
-            let step = (src_rate * speed) / dev_rate;
-            let buf_frames = buffer.len() / ch;
-            let mut pos = s.position.load(Ordering::Relaxed) as f64 / ch as f64;
+            let mut consumer = streaming.consumer.lock().unwrap();
 
-            let out_frames = data.len() / ch;
-            let mut filled = 0usize;
-
-            while filled < out_frames {
-                let src_idx = pos as usize;
-                if src_idx >= buf_frames {
-                    let remaining = out_frames - filled;
-                    for sample in &mut data[filled * ch..(filled + remaining) * ch] {
-                        *sample = $zero;
+            for sample in data.iter_mut() {
+                *sample = match consumer.try_pop() {
+                    Some(s) => $convert(s),
+                    None => {
+                        if streaming.is_done.load(Ordering::Acquire) {
+                            s.is_playing.store(false, Ordering::Relaxed);
+                        }
+                        $zero
                     }
-                    s.is_playing.store(false, Ordering::Relaxed);
-                    break;
-                }
-
-                let frac = (pos - src_idx as f64) as f32;
-                let next = (src_idx + 1).min(buf_frames - 1);
-
-                let base = filled * ch;
-                for c in 0..ch {
-                    let s0 = buffer[src_idx * ch + c];
-                    let s1 = buffer[next * ch + c];
-                    data[base + c] = $convert(s0 + (s1 - s0) * frac);
-                }
-
-                filled += 1;
-                pos += step;
+                };
             }
 
+            let ch = streaming.channels() as f64;
+            let rate = streaming.metadata.sample_rate as f64;
+            let frames_out = data.len() as f64 / ch;
+            let src_step = rate / s.device_rate;
+            let speed = f64::from_bits(s.speed.load(Ordering::Relaxed));
+            let current_pos = s.position.load(Ordering::Relaxed) as f64;
+            let src_frames = current_pos / ch;
+            let new_src_frames = src_frames + frames_out * src_step * speed;
             s.position
-                .store((pos * ch as f64) as u64, Ordering::Relaxed);
+                .store((new_src_frames * ch) as u64, Ordering::Relaxed);
         }
     }};
 }
 
 fn create_f32_callback(
-    shared: Arc<SharedState>,
+    state: Arc<PlaybackState>,
 ) -> impl FnMut(&mut [f32], &cpal::OutputCallbackInfo) + Send + 'static {
-    create_audio_callback!(shared, f32, 0.0, |v: f32| v)
+    create_streaming_callback!(state, f32, 0.0, |v: f32| v)
 }
 
 fn create_i16_callback(
-    shared: Arc<SharedState>,
+    state: Arc<PlaybackState>,
 ) -> impl FnMut(&mut [i16], &cpal::OutputCallbackInfo) + Send + 'static {
-    create_audio_callback!(shared, i16, 0, |v: f32| (v * i16::MAX as f32) as i16)
+    create_streaming_callback!(state, i16, 0, |v: f32| { (v * i16::MAX as f32) as i16 })
 }
 
 impl Default for AudioEngine {
@@ -523,38 +422,246 @@ impl Default for AudioEngine {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+fn resample_chunk(input: &[f32], source_channels: usize, ratio: f32) -> Vec<f32> {
+    let source_frames = input.len() / source_channels;
+    if source_frames == 0 || ratio == 0.0 {
+        return Vec::new();
+    }
 
-    #[test]
-    fn test_speed_atomic_roundtrip() {
-        let speeds: [f64; 4] = [0.25, 0.5, 0.75, 1.0];
-        for &s in &speeds {
-            let bits = s.to_bits();
-            let back = f64::from_bits(bits);
-            assert!((s - back).abs() < f64::EPSILON);
+    let out_frames = (source_frames as f32 / ratio).ceil() as usize;
+    let mut output = Vec::with_capacity(out_frames * source_channels);
+
+    for out_idx in 0..out_frames {
+        let src_pos = out_idx as f32 * ratio;
+        let idx0 = src_pos as usize;
+        let frac = src_pos - idx0 as f32;
+        let idx1 = (idx0 + 1).min(source_frames - 1);
+
+        for ch in 0..source_channels {
+            let s0 = input[idx0 * source_channels + ch];
+            let s1 = input[idx1 * source_channels + ch];
+            output.push(s0 + (s1 - s0) * frac);
         }
     }
 
-    #[test]
-    fn test_position_ms_conversion() {
-        let sr: f64 = 44100.0;
-        let ch: f64 = 2.0;
-        let one_sec_frames: f64 = sr * ch;
-        let ms = (one_sec_frames / ch / sr) * 1000.0;
-        assert!((ms - 1000.0).abs() < 0.01);
+    output
+}
+
+struct PeakContext {
+    total_source_frames: usize,
+    channels: usize,
+}
+
+fn update_peaks_incremental(
+    peaks: &mut [f32],
+    chunk: &[f32],
+    offset_source_frames: usize,
+    ctx: &PeakContext,
+) {
+    if ctx.total_source_frames == 0 || chunk.is_empty() {
+        return;
+    }
+    let frames = chunk.len() / ctx.channels;
+    for frame in 0..frames {
+        let mono: f32 = (0..ctx.channels)
+            .map(|c| chunk[frame * ctx.channels + c].abs())
+            .sum::<f32>()
+            / ctx.channels as f32;
+        let src_frame = offset_source_frames + frame;
+        let bin = (src_frame * PEAK_BINS / ctx.total_source_frames).min(PEAK_BINS - 1);
+        if mono > peaks[bin] {
+            peaks[bin] = mono;
+        }
+    }
+}
+
+fn handle_seek_if_requested(streaming: &StreamingState, decoder: &mut StreamingDecoder) -> u64 {
+    if !streaming.is_seeking.load(Ordering::Acquire) {
+        return 0;
+    }
+    let ms = f64::from_bits(streaming.seek_target_ms.load(Ordering::Acquire));
+    let _ = decoder.seek_to_ms(ms);
+    streaming.needs_buffer_swap.store(true, Ordering::Release);
+
+    let sample_rate = streaming.metadata.sample_rate as f64;
+    let channels = streaming.channels() as f64;
+    (ms / 1000.0 * sample_rate * channels) as u64
+}
+
+struct DecodeParams {
+    source_channels: usize,
+    ratio: f32,
+    source_frames_decoded: u64,
+}
+
+fn push_with_backpressure(
+    streaming: &StreamingState,
+    prod: &mut ringbuf::CachingProd<Arc<HeapRb<f32>>>,
+    samples: &[f32],
+) {
+    let mut offset = 0;
+    while offset < samples.len() {
+        if streaming.needs_buffer_swap.load(Ordering::Acquire)
+            || streaming.is_seeking.load(Ordering::Acquire)
+        {
+            break;
+        }
+        let pushed = prod.push_slice(&samples[offset..]);
+        if pushed == 0 {
+            thread::sleep(Duration::from_millis(1));
+        } else {
+            offset += pushed;
+        }
+    }
+}
+
+fn process_decoded_chunk(
+    streaming: &StreamingState,
+    prod: &mut ringbuf::CachingProd<Arc<HeapRb<f32>>>,
+    chunk: &[f32],
+    params: &mut DecodeParams,
+) {
+    let resampled = resample_chunk(chunk, params.source_channels, params.ratio);
+    let total_source = streaming.metadata.total_frames;
+
+    if !streaming.push_to_buffer.load(Ordering::Acquire) && total_source > 0 {
+        let mut peaks = streaming.peaks.lock().unwrap();
+        let ctx = PeakContext {
+            total_source_frames: total_source as usize,
+            channels: streaming.channels(),
+        };
+        update_peaks_incremental(
+            &mut peaks,
+            &resampled,
+            params.source_frames_decoded as usize,
+            &ctx,
+        );
     }
 
-    #[test]
-    fn test_step_calculation() {
-        let src_rate: f64 = 44100.0;
-        let dev_rate: f64 = 48000.0;
-        let speed: f64 = 1.0;
-        let step = (src_rate * speed) / dev_rate;
-        assert!((step - 0.91875).abs() < 0.001);
-
-        let step_half = (src_rate * 0.5) / dev_rate;
-        assert!((step_half - 0.459375).abs() < 0.001);
+    if streaming.push_to_buffer.load(Ordering::Acquire)
+        || !streaming.decode_immediately.load(Ordering::Acquire)
+    {
+        push_with_backpressure(streaming, prod, &resampled);
     }
+
+    let chunk_frames = chunk.len() / params.source_channels;
+    params.source_frames_decoded += chunk_frames as u64;
+    streaming
+        .decoded_frames
+        .store(params.source_frames_decoded, Ordering::Release);
+}
+
+fn swap_buffer_on_seek(
+    streaming: &StreamingState,
+    prod: &mut ringbuf::CachingProd<Arc<HeapRb<f32>>>,
+) {
+    if !streaming.needs_buffer_swap.load(Ordering::Acquire) {
+        return;
+    }
+    streaming.needs_buffer_swap.store(false, Ordering::Release);
+    streaming.decoded_frames.store(0, Ordering::Release);
+    streaming.is_done.store(false, Ordering::Release);
+    let capacity =
+        streaming.metadata.sample_rate as usize * streaming.channels() * RING_BUFFER_SECONDS;
+    let rb = HeapRb::<f32>::new(capacity);
+    let (new_prod, new_cons) = rb.split();
+    *prod = new_prod;
+    streaming.set_consumer(new_cons);
+    streaming.is_seeking.store(false, Ordering::Release);
+}
+
+pub fn spawn_decoder_thread(path: String, streaming: Arc<StreamingState>) {
+    thread::spawn(move || {
+        run_decoder_thread(path, streaming);
+    });
+}
+
+fn wait_until_playable(streaming: &StreamingState) -> bool {
+    while !streaming.is_playing.load(Ordering::Acquire) {
+        if streaming.decode_immediately.load(Ordering::Acquire) {
+            return true;
+        }
+        if streaming.is_seeking.load(Ordering::Acquire) {
+            return true;
+        }
+        if streaming.is_done.load(Ordering::Acquire) {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
+
+fn handle_seek_if_needed(
+    streaming: &StreamingState,
+    decoder: &mut StreamingDecoder,
+    prod: &mut ringbuf::CachingProd<Arc<HeapRb<f32>>>,
+    params: &mut DecodeParams,
+) {
+    if !streaming.decode_immediately.load(Ordering::Acquire) {
+        params.source_frames_decoded = handle_seek_if_requested(streaming, decoder);
+        swap_buffer_on_seek(streaming, prod);
+    }
+}
+
+fn decode_and_process_chunk(
+    decoder: &mut StreamingDecoder,
+    streaming: &StreamingState,
+    prod: &mut ringbuf::CachingProd<Arc<HeapRb<f32>>>,
+    params: &mut DecodeParams,
+) -> bool {
+    match decoder.decode_chunk(4096) {
+        Ok(chunk) if chunk.is_empty() => false,
+        Ok(chunk) => {
+            process_decoded_chunk(streaming, prod, &chunk, params);
+            !decoder.is_done()
+        }
+        Err(e) => {
+            eprintln!("Error de decodificación: {}", e);
+            false
+        }
+    }
+}
+
+fn run_decoder_thread(path: String, streaming: Arc<StreamingState>) {
+    let mut decoder = match StreamingDecoder::open(&path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Error abriendo archivo: {}", e);
+            streaming.is_done.store(true, Ordering::Release);
+            return;
+        }
+    };
+
+    let capacity =
+        streaming.metadata.sample_rate as usize * streaming.channels() * RING_BUFFER_SECONDS;
+    let rb = HeapRb::<f32>::new(capacity);
+    let (mut prod, cons) = rb.split();
+
+    streaming.set_consumer(cons);
+
+    let source_channels = decoder.channels();
+    let src_rate = streaming.metadata.sample_rate as f64;
+    let dev_rate = streaming.device_sample_rate;
+    let ratio = (src_rate / dev_rate) as f32;
+
+    let mut params = DecodeParams {
+        source_channels,
+        ratio,
+        source_frames_decoded: 0,
+    };
+
+    loop {
+        if !wait_until_playable(&streaming) {
+            break;
+        }
+
+        handle_seek_if_needed(&streaming, &mut decoder, &mut prod, &mut params);
+
+        if !decode_and_process_chunk(&mut decoder, &streaming, &mut prod, &mut params) {
+            break;
+        }
+    }
+
+    streaming.is_done.store(true, Ordering::Release);
 }

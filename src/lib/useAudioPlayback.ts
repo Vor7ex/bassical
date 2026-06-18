@@ -9,7 +9,6 @@ import {
   getAudioPosition,
   getDecodeProgress,
   getDecodedPeaks,
-  cacheAudio,
 } from "@/lib/audio";
 
 export function useAudioPlayback(audioPath: string) {
@@ -28,15 +27,31 @@ export function useAudioPlayback(audioPath: string) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const decodePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastPeakUpdateRef = useRef(0);
+  const loadedPathRef = useRef("");
+  const prevIsPlayingRef = useRef(isPlaying);
 
   useEffect(() => {
     lastPeakUpdateRef.current = 0;
     setDecodeProgress(0);
 
+    if (!audioPath) {
+      setAudioState(null);
+      return;
+    }
+
+    const isNewSong = loadedPathRef.current !== audioPath;
+    if (isNewSong) {
+      setCurrentPositionMs(0);
+      loadedPathRef.current = audioPath;
+    }
+
     loadAudio(audioPath)
       .then((info) => {
         setAudioState(info);
         startDecodePolling();
+        if (useSessionStore.getState().isPlaying) {
+          playAudio().catch(() => {});
+        }
       })
       .catch((err) => {
         console.error("Error cargando audio:", err);
@@ -44,10 +59,22 @@ export function useAudioPlayback(audioPath: string) {
       });
 
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-      if (decodePollRef.current) clearInterval(decodePollRef.current);
+      if (decodePollRef.current) {
+        clearInterval(decodePollRef.current);
+        decodePollRef.current = null;
+      }
     };
   }, [audioPath, setAudioState, setDecodeProgress]);
+
+  useEffect(() => {
+    if (prevIsPlayingRef.current === isPlaying) return;
+    prevIsPlayingRef.current = isPlaying;
+    if (isPlaying) {
+      playAudio().catch(() => {});
+    } else {
+      pauseAudio().catch(() => {});
+    }
+  }, [isPlaying]);
 
   function startDecodePolling() {
     if (decodePollRef.current) clearInterval(decodePollRef.current);
@@ -84,7 +111,6 @@ export function useAudioPlayback(audioPath: string) {
     stopDecodePolling();
     await refreshPeaks();
     setDecodeProgress(1.0);
-    cacheAudio(audioPath).catch(() => {});
   }
 
   useEffect(() => {
