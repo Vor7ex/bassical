@@ -1,5 +1,5 @@
 import type { Song } from "@/lib/types";
-import { useAudioPlayback } from "@/lib/useAudioPlayback";
+import { usePracticePlayback } from "@/lib/usePracticePlayback";
 import { WaveformView, PlaybackControls } from "@/components/Audio";
 
 interface AudioViewProps {
@@ -17,7 +17,7 @@ export function AudioView({ song, onBack }: AudioViewProps) {
     handlePlayPause,
     handleSeek,
     handleSpeedChange,
-  } = useAudioPlayback(song.audioPath);
+  } = usePracticePlayback(song.audioPath);
 
   return (
     <div className="flex flex-col h-full">

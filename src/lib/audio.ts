@@ -19,6 +19,10 @@ export async function loadAudio(path: string): Promise<AudioInfo> {
   return await invoke<AudioInfo>("load_audio", { path });
 }
 
+export async function decodeAudio(path: string): Promise<AudioInfo> {
+  return await invoke<AudioInfo>("decode_audio", { path });
+}
+
 export async function getDecodeProgress(): Promise<number> {
   return await invoke<number>("get_decode_progress");
 }
@@ -53,6 +57,14 @@ export async function getAudioDuration(): Promise<number> {
 
 export async function isAudioPlaying(): Promise<boolean> {
   return await invoke<boolean>("is_audio_playing");
+}
+
+export async function startPlayback(path: string): Promise<AudioInfo> {
+  return await invoke<AudioInfo>("start_playback", { path });
+}
+
+export async function stopPlayback(): Promise<void> {
+  return await invoke<void>("stop_playback");
 }
 
 export async function extractMetadata(filePath: string): Promise<SongMetadata> {

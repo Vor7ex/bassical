@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use tauri::State;
 
 use crate::audio::decoder::probe_file;
-use crate::audio::engine::{spawn_decoder_thread, AudioEngine};
+use crate::audio::engine::{spawn_decoder_thread, AudioEngine, StreamingState};
 
 pub struct AudioEngineState(pub Mutex<AudioEngine>);
 
@@ -19,31 +19,49 @@ pub struct AudioInfo {
     pub peaks: Vec<f32>,
 }
 
-#[tauri::command]
-pub fn load_audio(
+fn setup_stream(
     path: String,
-    engine_state: State<AudioEngineState>,
+    engine: &mut AudioEngine,
+    decode_immediately: bool,
 ) -> Result<AudioInfo, String> {
     let metadata = probe_file(&path)?;
-
-    let mut engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
     let device_rate = engine.device_rate();
 
-    let streaming =
-        crate::audio::engine::StreamingState::new(metadata.clone(), engine.channels(), device_rate);
+    let streaming = StreamingState::new(metadata.clone(), engine.channels(), device_rate);
+    if decode_immediately {
+        streaming.set_decode_immediately(true);
+    }
+    let initial_peaks = streaming.get_peaks();
     let streaming = std::sync::Arc::new(streaming);
 
     engine.set_current_stream(streaming.clone());
-    drop(engine);
 
-    spawn_decoder_thread(path, streaming.clone());
+    spawn_decoder_thread(path, streaming);
 
     Ok(AudioInfo {
         duration_ms: metadata.duration_ms,
         sample_rate: metadata.sample_rate,
         channels: metadata.channels,
-        peaks: Vec::new(),
+        peaks: initial_peaks,
     })
+}
+
+#[tauri::command]
+pub fn load_audio(
+    path: String,
+    engine_state: State<AudioEngineState>,
+) -> Result<AudioInfo, String> {
+    let mut engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
+    setup_stream(path, &mut engine, false)
+}
+
+#[tauri::command]
+pub fn decode_audio(
+    path: String,
+    engine_state: State<AudioEngineState>,
+) -> Result<AudioInfo, String> {
+    let mut engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
+    setup_stream(path, &mut engine, true)
 }
 
 #[tauri::command]
@@ -98,4 +116,26 @@ pub fn get_audio_duration(engine_state: State<AudioEngineState>) -> Result<f64, 
 pub fn is_audio_playing(engine_state: State<AudioEngineState>) -> Result<bool, String> {
     let engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
     Ok(engine.is_playing())
+}
+
+#[tauri::command]
+pub fn start_playback(
+    path: String,
+    engine_state: State<AudioEngineState>,
+) -> Result<AudioInfo, String> {
+    let mut engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
+    let info = engine.start_playback(path)?;
+    Ok(AudioInfo {
+        duration_ms: info.duration_ms,
+        sample_rate: info.sample_rate,
+        channels: info.channels,
+        peaks: vec![],
+    })
+}
+
+#[tauri::command]
+pub fn stop_playback(engine_state: State<AudioEngineState>) -> Result<(), String> {
+    let mut engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
+    engine.stop_playback();
+    Ok(())
 }

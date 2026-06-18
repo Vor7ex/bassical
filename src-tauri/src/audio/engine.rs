@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use super::decoder::{AudioMetadata, StreamingDecoder};
+use super::decoder::{probe_file, AudioMetadata, StreamingDecoder};
 
 const PEAK_BINS: usize = 2000;
 const RING_BUFFER_SECONDS: usize = 2;
@@ -16,6 +16,7 @@ type RbProd = ringbuf::CachingProd<Arc<HeapRb<f32>>>;
 type RbCons = ringbuf::CachingCons<Arc<HeapRb<f32>>>;
 
 pub struct StreamingState {
+    #[allow(dead_code)]
     producer: Mutex<RbProd>,
     consumer: Mutex<RbCons>,
     pub metadata: AudioMetadata,
@@ -26,6 +27,8 @@ pub struct StreamingState {
     seek_target_ms: AtomicU64,
     needs_buffer_swap: AtomicBool,
     is_playing: AtomicBool,
+    decode_immediately: AtomicBool,
+    push_to_buffer: AtomicBool,
     device_channels: usize,
     device_sample_rate: f64,
 }
@@ -40,6 +43,10 @@ impl StreamingState {
         *guard = consumer;
     }
 
+    pub fn set_decode_immediately(&self, val: bool) {
+        self.decode_immediately.store(val, Ordering::Release);
+    }
+
     fn get_decode_progress(&self) -> f64 {
         let total = self.metadata.total_frames;
         if total == 0 {
@@ -49,7 +56,7 @@ impl StreamingState {
         (decoded as f64 / total as f64).min(1.0)
     }
 
-    fn get_peaks(&self) -> Vec<f32> {
+    pub fn get_peaks(&self) -> Vec<f32> {
         self.peaks.lock().unwrap().clone()
     }
 
@@ -69,11 +76,14 @@ impl StreamingState {
             seek_target_ms: AtomicU64::new(0),
             needs_buffer_swap: AtomicBool::new(false),
             is_playing: AtomicBool::new(false),
+            decode_immediately: AtomicBool::new(false),
+            push_to_buffer: AtomicBool::new(false),
             device_channels,
             device_sample_rate,
         }
     }
 
+    #[allow(dead_code)]
     fn init_buffer(&self) {
         let capacity = self.metadata.sample_rate as usize * self.channels() * RING_BUFFER_SECONDS;
         let rb = HeapRb::<f32>::new(capacity);
@@ -91,6 +101,13 @@ struct PlaybackState {
     speed: AtomicU64,
     device_rate: f64,
     streaming: Mutex<Option<Arc<StreamingState>>>,
+    playback: Mutex<Option<Arc<StreamingState>>>,
+}
+
+pub struct AudioPlaybackInfo {
+    pub duration_ms: f64,
+    pub sample_rate: u32,
+    pub channels: u16,
 }
 
 pub struct AudioEngine {
@@ -115,6 +132,7 @@ impl AudioEngine {
             speed: AtomicU64::new(1.0f64.to_bits()),
             device_rate,
             streaming: Mutex::new(None),
+            playback: Mutex::new(None),
         });
 
         let mut engine = AudioEngine {
@@ -167,7 +185,10 @@ impl AudioEngine {
 
     pub fn play(&mut self) -> Result<(), String> {
         self.state.is_playing.store(true, Ordering::Relaxed);
-        if let Some(ref s) = *self.state.streaming.lock().unwrap() {
+        let pb = self.state.playback.lock().unwrap();
+        if let Some(ref s) = *pb {
+            s.is_playing.store(true, Ordering::Relaxed);
+        } else if let Some(ref s) = *self.state.streaming.lock().unwrap() {
             s.is_playing.store(true, Ordering::Relaxed);
         }
         Ok(())
@@ -175,7 +196,10 @@ impl AudioEngine {
 
     pub fn pause(&mut self) -> Result<(), String> {
         self.state.is_playing.store(false, Ordering::Relaxed);
-        if let Some(ref s) = *self.state.streaming.lock().unwrap() {
+        let pb = self.state.playback.lock().unwrap();
+        if let Some(ref s) = *pb {
+            s.is_playing.store(false, Ordering::Relaxed);
+        } else if let Some(ref s) = *self.state.streaming.lock().unwrap() {
             s.is_playing.store(false, Ordering::Relaxed);
         }
         Ok(())
@@ -183,10 +207,17 @@ impl AudioEngine {
 
     pub fn seek(&self, position_ms: f64) -> Result<(), String> {
         let streaming = {
-            let guard = self.state.streaming.lock().unwrap();
-            guard.clone()
+            let pb = self.state.playback.lock().unwrap();
+            if let Some(ref s) = *pb {
+                s.clone()
+            } else {
+                let guard = self.state.streaming.lock().unwrap();
+                match *guard {
+                    Some(ref s) => s.clone(),
+                    None => return Err("No hay audio cargado".to_string()),
+                }
+            }
         };
-        let streaming = streaming.ok_or_else(|| "No hay audio cargado".to_string())?;
 
         streaming
             .seek_target_ms
@@ -262,6 +293,52 @@ impl AudioEngine {
             .map(|c| c.channels() as usize)
             .unwrap_or(2)
     }
+
+    pub fn start_playback(&mut self, path: String) -> Result<AudioPlaybackInfo, String> {
+        let existing = self.state.playback.lock().unwrap().clone();
+        if let Some(ref pb) = existing {
+            if !pb.is_done.load(Ordering::Acquire) {
+                pb.is_playing.store(true, Ordering::Relaxed);
+                self.state.is_playing.store(true, Ordering::Relaxed);
+                return Ok(AudioPlaybackInfo {
+                    duration_ms: pb.metadata.duration_ms,
+                    sample_rate: pb.metadata.sample_rate,
+                    channels: pb.metadata.channels,
+                });
+            }
+        }
+
+        let metadata = probe_file(&path)?;
+        let device_rate = self.state.device_rate;
+        let streaming = Arc::new(StreamingState::new(
+            metadata.clone(),
+            self.channels(),
+            device_rate,
+        ));
+        streaming.push_to_buffer.store(true, Ordering::Release);
+        streaming.is_playing.store(true, Ordering::Release);
+
+        let info = AudioPlaybackInfo {
+            duration_ms: metadata.duration_ms,
+            sample_rate: metadata.sample_rate,
+            channels: metadata.channels,
+        };
+
+        *self.state.playback.lock().unwrap() = Some(streaming.clone());
+        self.state.position.store(0, Ordering::Relaxed);
+        self.state.speed.store(1.0f64.to_bits(), Ordering::Relaxed);
+        self.state.is_playing.store(true, Ordering::Relaxed);
+
+        spawn_decoder_thread(path, streaming);
+        Ok(info)
+    }
+
+    pub fn stop_playback(&mut self) {
+        if let Some(pb) = self.state.playback.lock().unwrap().take() {
+            pb.is_playing.store(false, Ordering::Relaxed);
+        }
+        self.state.is_playing.store(false, Ordering::Relaxed);
+    }
 }
 
 fn log_error(err: cpal::StreamError) {
@@ -278,15 +355,19 @@ macro_rules! create_streaming_callback {
             }
 
             let streaming = {
-                let guard = s.streaming.lock().unwrap();
-                guard.clone()
-            };
-
-            let streaming = match streaming {
-                Some(st) => st,
-                None => {
-                    data.fill($zero);
-                    return;
+                let pb = s.playback.lock().unwrap();
+                if let Some(ref st) = *pb {
+                    st.clone()
+                } else {
+                    drop(pb);
+                    let guard = s.streaming.lock().unwrap();
+                    match *guard {
+                        Some(ref st) => st.clone(),
+                        None => {
+                            data.fill($zero);
+                            return;
+                        }
+                    }
                 }
             };
 
@@ -443,7 +524,7 @@ fn process_decoded_chunk(
     let resampled = resample_chunk(chunk, params.source_channels, params.ratio);
     let total_source = streaming.metadata.total_frames;
 
-    if total_source > 0 {
+    if !streaming.push_to_buffer.load(Ordering::Acquire) && total_source > 0 {
         let mut peaks = streaming.peaks.lock().unwrap();
         let ctx = PeakContext {
             total_source_frames: total_source as usize,
@@ -457,7 +538,11 @@ fn process_decoded_chunk(
         );
     }
 
-    push_with_backpressure(streaming, prod, &resampled);
+    if streaming.push_to_buffer.load(Ordering::Acquire)
+        || !streaming.decode_immediately.load(Ordering::Acquire)
+    {
+        push_with_backpressure(streaming, prod, &resampled);
+    }
 
     let chunk_frames = chunk.len() / params.source_channels;
     params.source_frames_decoded += chunk_frames as u64;
@@ -521,6 +606,9 @@ fn run_decoder_thread(path: String, streaming: Arc<StreamingState>) {
 
     loop {
         while !streaming.is_playing.load(Ordering::Acquire) {
+            if streaming.decode_immediately.load(Ordering::Acquire) {
+                break;
+            }
             if streaming.is_seeking.load(Ordering::Acquire) {
                 break;
             }
@@ -530,8 +618,10 @@ fn run_decoder_thread(path: String, streaming: Arc<StreamingState>) {
             thread::sleep(Duration::from_millis(10));
         }
 
-        params.source_frames_decoded = handle_seek_if_requested(&streaming, &mut decoder);
-        swap_buffer_on_seek(&streaming, &mut prod);
+        if !streaming.decode_immediately.load(Ordering::Acquire) {
+            params.source_frames_decoded = handle_seek_if_requested(&streaming, &mut decoder);
+            swap_buffer_on_seek(&streaming, &mut prod);
+        }
 
         match decoder.decode_chunk(4096) {
             Ok(chunk) if chunk.is_empty() => break,
