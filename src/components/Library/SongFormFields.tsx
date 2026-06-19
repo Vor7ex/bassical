@@ -29,6 +29,8 @@ interface SongFormFieldsProps {
   setDifficulty: (v: number | null) => void;
   tags: string[];
   setTags: (v: string[]) => void;
+  audioPath?: string;
+  onBrowseAudioPath?: () => void;
 }
 
 const inputClass =
@@ -114,6 +116,26 @@ export function SongFormFields(props: SongFormFieldsProps) {
       <Field label="Etiquetas">
         <TagInput tags={props.tags} onChange={props.setTags} />
       </Field>
+      {props.audioPath !== undefined && (
+        <Field label="Ruta del archivo">
+          <div className="flex gap-2">
+            <input
+              type="text" value={props.audioPath} readOnly
+              className="flex-1 bg-bg-input border border-border-subtle text-text-secondary text-body px-3 h-8 rounded-sm truncate"
+              title={props.audioPath}
+            />
+            {props.onBrowseAudioPath && (
+              <button
+                onClick={props.onBrowseAudioPath}
+                type="button"
+                className="bg-bg-input border border-border-subtle text-text-secondary text-caption px-3 h-8 rounded-sm hover:text-text-primary cursor-pointer transition-colors shrink-0"
+              >
+                Examinar
+              </button>
+            )}
+          </div>
+        </Field>
+      )}
     </>
   );
 }
