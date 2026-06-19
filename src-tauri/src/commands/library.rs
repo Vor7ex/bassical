@@ -19,32 +19,65 @@ pub struct SongMetadata {
     pub genre: Option<String>,
 }
 
+fn prefer_longer(existing: &Option<String>, new_val: String) -> Option<String> {
+    match existing {
+        Some(e) if e.len() >= new_val.len() => Some(e.clone()),
+        _ => Some(new_val),
+    }
+}
+
+fn extract_year_from_date(date: &str) -> Option<String> {
+    if date.len() >= 4 {
+        let year_str = &date[..4];
+        if year_str.chars().all(|c| c.is_ascii_digit()) {
+            return Some(year_str.to_string());
+        }
+    }
+    None
+}
+
 fn apply_standard_tag(meta: &mut SongMetadata, std_tag: &StandardTag) {
     match std_tag {
         StandardTag::TrackTitle(s) => {
-            if meta.title.is_none() {
-                meta.title = Some(s.to_string());
-            }
+            meta.title = prefer_longer(&meta.title, s.to_string());
         }
         StandardTag::Artist(s) => {
-            if meta.artist.is_none() {
-                meta.artist = Some(s.to_string());
-            }
+            meta.artist = prefer_longer(&meta.artist, s.to_string());
         }
         StandardTag::Album(s) => {
-            if meta.album.is_none() {
-                meta.album = Some(s.to_string());
-            }
+            meta.album = prefer_longer(&meta.album, s.to_string());
         }
         StandardTag::ReleaseYear(y) => {
-            if meta.year.is_none() {
-                meta.year = Some(y.to_string());
+            meta.year = prefer_longer(&meta.year, y.to_string());
+        }
+        StandardTag::RecordingYear(y) => {
+            meta.year = prefer_longer(&meta.year, y.to_string());
+        }
+        StandardTag::RecordingDate(s) => {
+            if let Some(year) = extract_year_from_date(s) {
+                meta.year = prefer_longer(&meta.year, year);
+            }
+        }
+        StandardTag::ReleaseDate(s) => {
+            if let Some(year) = extract_year_from_date(s) {
+                meta.year = prefer_longer(&meta.year, year);
+            }
+        }
+        StandardTag::ReleaseTime(s) => {
+            if let Some(year) = extract_year_from_date(s) {
+                meta.year = prefer_longer(&meta.year, year);
+            }
+        }
+        StandardTag::OriginalReleaseYear(y) => {
+            meta.year = prefer_longer(&meta.year, y.to_string());
+        }
+        StandardTag::OriginalReleaseDate(s) => {
+            if let Some(year) = extract_year_from_date(s) {
+                meta.year = prefer_longer(&meta.year, year);
             }
         }
         StandardTag::Genre(s) => {
-            if meta.genre.is_none() {
-                meta.genre = Some(s.to_string());
-            }
+            meta.genre = prefer_longer(&meta.genre, s.to_string());
         }
         _ => {}
     }
@@ -52,6 +85,10 @@ fn apply_standard_tag(meta: &mut SongMetadata, std_tag: &StandardTag) {
 
 fn apply_tags_to_metadata(meta: &mut SongMetadata, tags: &[symphonia::core::meta::Tag]) {
     for tag in tags {
+        eprintln!(
+            "[apply_tags] key={:?}, value={:?}, std={:?}",
+            tag.raw.key, tag.raw.value, tag.std
+        );
         if let Some(ref std_tag) = tag.std {
             apply_standard_tag(meta, std_tag);
         }
@@ -82,16 +119,25 @@ pub fn extract_metadata(file_path: String) -> Result<SongMetadata, String> {
 
     let mut song_meta = SongMetadata::default();
 
-    match format.metadata().current() {
-        Some(rev) => {
-            eprintln!(
-                "[extract_metadata] metadata revision found, tags count: {}",
-                rev.media.tags.len()
-            );
-            apply_tags_to_metadata(&mut song_meta, &rev.media.tags);
+    loop {
+        match format.metadata().current() {
+            Some(rev) => {
+                eprintln!(
+                    "[extract_metadata] metadata revision found, tags count: {}",
+                    rev.media.tags.len()
+                );
+                apply_tags_to_metadata(&mut song_meta, &rev.media.tags);
+            }
+            None => {
+                eprintln!("[extract_metadata] no more metadata revisions");
+                break;
+            }
         }
-        None => {
-            eprintln!("[extract_metadata] NO metadata revision found");
+
+        if !format.metadata().is_latest() {
+            format.metadata().pop();
+        } else {
+            break;
         }
     }
 
@@ -288,7 +334,7 @@ mod tests {
         fs::write(&audio_file, "fake audio").unwrap();
         let title = SongTitle::new(name.to_string());
         let audio_path = AudioPath::new(audio_file.to_str().unwrap().to_string());
-        add_song(title, None, audio_path).unwrap()
+        add_song(title, None, audio_path, None, None, None).unwrap()
     }
 
     fn make_update<F: FnOnce(&mut SongUpdate)>(f: F) -> SongUpdate {
@@ -340,6 +386,9 @@ mod tests {
             SongTitle::new("Test".to_string()),
             Some(ArtistName::new("Artist".to_string())),
             AudioPath::new(audio_file.to_str().unwrap().to_string()),
+            None,
+            None,
+            None,
         )
         .unwrap();
         assert_eq!(song.title.as_str(), "Test");
@@ -364,6 +413,9 @@ mod tests {
             SongTitle::new("Bad".to_string()),
             None,
             AudioPath::new("/nonexistent/file.mp3".to_string()),
+            None,
+            None,
+            None,
         );
         assert!(result.is_err());
         assert!(get_library().unwrap().songs.is_empty());

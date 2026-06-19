@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { updateSong } from "@/lib/library";
+import { pickAudioFile } from "@/lib/dialog";
 import { useLibraryStore } from "@/lib/store";
 import type { Song } from "@/lib/types";
 import { SongFormFields } from "./SongFormFields";
@@ -19,9 +20,15 @@ export function EditSongDialog({ song, onClose }: EditSongDialogProps) {
   const [bpm, setBpm] = useState(song.bpm?.toString() ?? "");
   const [difficulty, setDifficulty] = useState<number | null>(song.difficulty);
   const [tags, setTags] = useState<string[]>(song.tags);
+  const [audioPath, setAudioPath] = useState(song.audioPath);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const updateSongInStore = useLibraryStore((s) => s.updateSongInStore);
+
+  async function handleBrowsePath() {
+    const picked = await pickAudioFile();
+    if (picked) setAudioPath(picked);
+  }
 
   async function handleSave() {
     if (!title.trim()) {
@@ -41,6 +48,7 @@ export function EditSongDialog({ song, onClose }: EditSongDialogProps) {
         bpm: bpm ? parseFloat(bpm) : undefined,
         difficulty: difficulty ?? undefined,
         tags,
+        audioPath: audioPath !== song.audioPath ? audioPath : undefined,
       });
       updateSongInStore(updated);
       onClose();
@@ -79,6 +87,7 @@ export function EditSongDialog({ song, onClose }: EditSongDialogProps) {
             bpm={bpm} setBpm={setBpm}
             difficulty={difficulty} setDifficulty={setDifficulty}
             tags={tags} setTags={setTags}
+            audioPath={audioPath} onBrowseAudioPath={handleBrowsePath}
           />
           {error && <p className="text-caption text-text-danger">{error}</p>}
         </div>

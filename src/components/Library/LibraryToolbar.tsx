@@ -1,6 +1,6 @@
 import { pickAudioFile } from "@/lib/dialog";
 import { addSong, deleteSong } from "@/lib/library";
-import { extractMetadata } from "@/lib/audio";
+import { extractMetadata, type SongMetadata } from "@/lib/audio";
 import { useLibraryStore } from "@/lib/store";
 import type { Song } from "@/lib/types";
 import { useState } from "react";
@@ -41,14 +41,22 @@ export function LibraryToolbar({ selectedSong, onAddSong, onEditSong, onOpenSong
     if (!path) return;
     const filename = path.split(/[/\\]/).pop() ?? "";
     let nameWithoutExt = filename.replace(/\.[^.]+$/, "");
+    let meta: SongMetadata | undefined;
     try {
-      const meta = await extractMetadata(path);
+      meta = await extractMetadata(path);
       if (meta.title) nameWithoutExt = meta.title;
     } catch {
       console.error("[handleQuickAdd] extractMetadata failed, using filename");
     }
     try {
-      const song = await addSong(nameWithoutExt, undefined, path);
+      const song = await addSong(
+        nameWithoutExt,
+        meta?.artist ?? undefined,
+        path,
+        meta?.album ?? undefined,
+        meta?.genre ?? undefined,
+        meta?.year ? parseInt(meta.year, 10) : undefined,
+      );
       addSongToStore(song);
     } catch {
       onAddSong();

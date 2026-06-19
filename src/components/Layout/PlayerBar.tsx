@@ -33,36 +33,19 @@ function useAutoPlayNext(
 
 function PlaybackControls({
   isPlaying,
-  isLooping,
-  isShuffle,
   hasSong,
   onPlayPause,
   onPrevious,
   onNext,
-  onToggleLoop,
-  onToggleShuffle,
 }: {
   isPlaying: boolean;
-  isLooping: boolean;
-  isShuffle: boolean;
   hasSong: boolean;
   onPlayPause: () => void;
   onPrevious: () => void;
   onNext: () => void;
-  onToggleLoop: () => void;
-  onToggleShuffle: () => void;
 }) {
   return (
     <div className="flex items-center gap-4">
-      <button
-        onClick={onToggleShuffle}
-        className={`p-1.5 rounded-sm transition-colors cursor-pointer ${
-          isShuffle ? "text-accent" : "text-text-tertiary hover:text-text-secondary"
-        }`}
-        title="Aleatorio"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="4" y1="4" x2="9" y2="9"></line></svg>
-      </button>
       <button
         onClick={onPrevious}
         disabled={!hasSong}
@@ -87,15 +70,6 @@ function PlaybackControls({
         className="p-1.5 text-text-secondary hover:text-text-primary disabled:opacity-50 transition-colors cursor-pointer"
       >
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round"></line></svg>
-      </button>
-      <button
-        onClick={onToggleLoop}
-        className={`p-1.5 rounded-sm transition-colors cursor-pointer ${
-          isLooping ? "text-accent" : "text-text-tertiary hover:text-text-secondary"
-        }`}
-        title="Repetir"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"></polyline><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><polyline points="7 23 3 19 7 15"></polyline><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>
       </button>
     </div>
   );
@@ -127,10 +101,6 @@ function SongInfo({
 
 export function PlayerBar() {
   const currentSongId = useSessionStore((s) => s.currentSongId);
-  const isLooping = useSessionStore((s) => s.isLooping);
-  const isShuffle = useSessionStore((s) => s.isShuffle);
-  const toggleLoop = useSessionStore((s) => s.toggleLoop);
-  const toggleShuffle = useSessionStore((s) => s.toggleShuffle);
   const playNext = useSessionStore((s) => s.playNext);
   const playPrevious = useSessionStore((s) => s.playPrevious);
   
@@ -180,14 +150,10 @@ export function PlayerBar() {
         <div className="flex flex-col items-center justify-center gap-1 w-1/3">
           <PlaybackControls
             isPlaying={isPlaying}
-            isLooping={isLooping}
-            isShuffle={isShuffle}
             hasSong={!!song}
             onPlayPause={handlePlayPause}
             onPrevious={playPrevious}
             onNext={playNext}
-            onToggleLoop={toggleLoop}
-            onToggleShuffle={toggleShuffle}
           />
         </div>
 
