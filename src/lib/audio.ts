@@ -5,6 +5,7 @@ export interface AudioInfo {
   sampleRate: number;
   channels: number;
   peaks: number[];
+  complete: boolean;
 }
 
 export interface SongMetadata {
@@ -15,8 +16,8 @@ export interface SongMetadata {
   genre?: string;
 }
 
-export async function loadAudio(path: string): Promise<AudioInfo> {
-  return await invoke<AudioInfo>("load_audio", { path });
+export async function loadAudio(path: string, autoplay?: boolean): Promise<AudioInfo> {
+  return await invoke<AudioInfo>("load_audio", { path, autoplay });
 }
 
 export async function decodeAudio(path: string): Promise<AudioInfo> {
@@ -59,8 +60,11 @@ export async function isAudioPlaying(): Promise<boolean> {
   return await invoke<boolean>("is_audio_playing");
 }
 
-export async function startPlayback(path: string): Promise<AudioInfo> {
-  return await invoke<AudioInfo>("start_playback", { path });
+export async function startPlayback(
+  path: string,
+  positionMs?: number,
+): Promise<AudioInfo> {
+  return await invoke<AudioInfo>("start_playback", { path, positionMs });
 }
 
 export async function stopPlayback(): Promise<void> {

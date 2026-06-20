@@ -1,11 +1,12 @@
 use soundtouch::{Setting, SoundTouch};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 
 const CHUNK_FRAMES: usize = 4096;
 const PREFILL_CHUNKS: usize = 4;
 
 pub struct FullBufferPlayback {
-    decoded_samples: Vec<f32>,
+    decoded_samples: Arc<Vec<f32>>,
     sample_rate: u32,
     channels: usize,
     total_frames: usize,
@@ -23,7 +24,7 @@ unsafe impl Send for FullBufferPlayback {}
 
 impl FullBufferPlayback {
     pub fn new(
-        decoded_samples: Vec<f32>,
+        decoded_samples: Arc<Vec<f32>>,
         sample_rate: u32,
         channels: usize,
         initial_speed: f64,

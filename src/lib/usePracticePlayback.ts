@@ -57,7 +57,11 @@ export function usePracticePlayback(audioPath: string) {
     decodeAudio(audioPath)
       .then((info) => {
         setAudioState(info);
-        startDecodePolling();
+        if (info.complete) {
+          finalizeDecode();
+        } else {
+          startDecodePolling();
+        }
       })
       .catch(() => setAudioState(null));
 
@@ -149,7 +153,7 @@ export function usePracticePlayback(audioPath: string) {
         await pauseAudio();
         setIsPlaying(false);
       } else {
-        const info = await startPlayback(audioPath);
+        const info = await startPlayback(audioPath, currentPositionMs);
         setAudioState((prev) =>
           prev
             ? {

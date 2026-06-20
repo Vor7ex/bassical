@@ -8,6 +8,7 @@ use std::thread;
 use std::time::Duration;
 
 use super::buffer_playback::FullBufferPlayback;
+use super::cache::{ActiveDecode, AudioCache, CachedAudio};
 use super::decoder::{probe_file, AudioMetadata, StreamingDecoder};
 
 const PEAK_BINS: usize = 2000;
@@ -23,7 +24,7 @@ pub struct StreamingState {
     pub metadata: AudioMetadata,
     decoded_frames: AtomicU64,
     peaks: Mutex<Vec<f32>>,
-    is_done: AtomicBool,
+    pub is_done: AtomicBool,
     is_seeking: AtomicBool,
     seek_target_ms: AtomicU64,
     needs_buffer_swap: AtomicBool,
@@ -31,7 +32,7 @@ pub struct StreamingState {
     decode_immediately: AtomicBool,
     push_to_buffer: AtomicBool,
     device_channels: usize,
-    device_sample_rate: f64,
+    pub device_sample_rate: f64,
     pub decoded_buffer: Mutex<Vec<f32>>,
 }
 
@@ -62,7 +63,7 @@ impl StreamingState {
         self.peaks.lock().unwrap().clone()
     }
 
-    fn get_duration_ms(&self) -> f64 {
+    pub fn get_duration_ms(&self) -> f64 {
         self.metadata.duration_ms
     }
 
@@ -118,12 +119,13 @@ pub struct AudioPlaybackInfo {
 pub struct AudioEngine {
     state: Arc<PlaybackState>,
     stream: Option<Stream>,
+    cache: Arc<AudioCache>,
 }
 
 unsafe impl Send for AudioEngine {}
 
 impl AudioEngine {
-    pub fn new() -> Self {
+    pub fn new(cache: Arc<AudioCache>) -> Self {
         let host = cpal::default_host();
         let device_rate = host
             .default_output_device()
@@ -145,6 +147,7 @@ impl AudioEngine {
         let mut engine = AudioEngine {
             state,
             stream: None,
+            cache,
         };
         if let Err(e) = engine.create_stream() {
             eprintln!("Failed to create initial stream: {}", e);
@@ -156,7 +159,71 @@ impl AudioEngine {
         self.state.position.store(0, Ordering::Relaxed);
         self.state.speed.store(1.0f64.to_bits(), Ordering::Relaxed);
         *self.state.current_path.lock().unwrap() = path;
+        self.clear_full_buffer();
+        self.clear_playback();
+        if let Some(old) = self.state.streaming.lock().unwrap().take() {
+            old.is_done.store(true, Ordering::Release);
+        }
         *self.state.streaming.lock().unwrap() = Some(streaming);
+    }
+
+    pub fn load_from_cache(
+        &mut self,
+        path: String,
+        cached: Arc<CachedAudio>,
+    ) -> Result<(AudioPlaybackInfo, Vec<f32>), String> {
+        self.state.position.store(0, Ordering::Relaxed);
+        self.state.speed.store(1.0f64.to_bits(), Ordering::Relaxed);
+        *self.state.current_path.lock().unwrap() = path.clone();
+        *self.state.streaming.lock().unwrap() = None;
+        *self.state.playback.lock().unwrap() = None;
+
+        let mut fbp = FullBufferPlayback::new(
+            cached.samples.clone(),
+            self.state.device_rate as u32,
+            cached.channels as usize,
+            1.0,
+        );
+        fbp.set_path(path);
+        *self.state.full_buffer.lock().unwrap() = Some(Arc::new(fbp));
+
+        Ok((
+            AudioPlaybackInfo {
+                duration_ms: cached.duration_ms,
+                sample_rate: cached.sample_rate,
+                channels: cached.channels,
+            },
+            cached.peaks.clone(),
+        ))
+    }
+
+    pub fn attach_to_active_decode(
+        &mut self,
+        path: String,
+        active: Arc<ActiveDecode>,
+    ) -> Result<(AudioPlaybackInfo, Vec<f32>), String> {
+        self.state.position.store(0, Ordering::Relaxed);
+        self.state.speed.store(1.0f64.to_bits(), Ordering::Relaxed);
+        *self.state.current_path.lock().unwrap() = path;
+        *self.state.streaming.lock().unwrap() = Some(active.streaming.clone());
+        *self.state.playback.lock().unwrap() = None;
+        self.clear_full_buffer();
+
+        Ok((
+            AudioPlaybackInfo {
+                duration_ms: active.streaming.get_duration_ms(),
+                sample_rate: active.streaming.metadata.sample_rate,
+                channels: active.streaming.metadata.channels,
+            },
+            active.streaming.get_peaks(),
+        ))
+    }
+
+    fn clear_playback(&self) {
+        if let Some(pb) = self.state.playback.lock().unwrap().take() {
+            pb.is_playing.store(false, Ordering::Relaxed);
+            pb.is_done.store(true, Ordering::Release);
+        }
     }
 
     fn create_stream(&mut self) -> Result<(), String> {
@@ -297,6 +364,11 @@ impl AudioEngine {
     }
 
     pub fn get_decode_progress(&self) -> f64 {
+        let current_path = self.state.current_path.lock().unwrap().clone();
+        if !current_path.is_empty() && self.cache.get(&current_path).is_some() {
+            return 1.0;
+        }
+
         let streaming = {
             let guard = self.state.streaming.lock().unwrap();
             guard.clone()
@@ -305,6 +377,11 @@ impl AudioEngine {
     }
 
     pub fn get_peaks(&self) -> Vec<f32> {
+        let current_path = self.state.current_path.lock().unwrap().clone();
+        if let Some(cached) = self.cache.get(&current_path) {
+            return cached.peaks.clone();
+        }
+
         let streaming = {
             let guard = self.state.streaming.lock().unwrap();
             guard.clone()
@@ -329,6 +406,30 @@ impl AudioEngine {
     }
 
     pub fn start_playback(&mut self, path: String) -> Result<AudioPlaybackInfo, String> {
+        if let Some(cached) = self.cache.get(&path) {
+            self.clear_full_buffer();
+            self.clear_playback();
+            *self.state.current_path.lock().unwrap() = path.clone();
+
+            let mut fbp = FullBufferPlayback::new(
+                cached.samples.clone(),
+                self.state.device_rate as u32,
+                cached.channels as usize,
+                1.0,
+            );
+            fbp.set_path(path);
+            *self.state.full_buffer.lock().unwrap() = Some(Arc::new(fbp));
+            self.state.position.store(0, Ordering::Relaxed);
+            self.state.speed.store(1.0f64.to_bits(), Ordering::Relaxed);
+            self.state.is_playing.store(true, Ordering::Relaxed);
+
+            return Ok(AudioPlaybackInfo {
+                duration_ms: cached.duration_ms,
+                sample_rate: cached.sample_rate,
+                channels: cached.channels,
+            });
+        }
+
         if self.try_resume_full_buffer(&path) {
             let fbp = self.state.full_buffer.lock().unwrap();
             let fbp = fbp.as_ref().unwrap();
@@ -408,6 +509,39 @@ impl AudioEngine {
     }
 
     pub fn switch_to_full_buffer_playback(&mut self) -> Result<(), String> {
+        let current_path = self.state.current_path.lock().unwrap().clone();
+        let speed = f64::from_bits(self.state.speed.load(Ordering::Relaxed));
+
+        if let Some(cached) = self.cache.get(&current_path) {
+            let mut fbp = FullBufferPlayback::new(
+                cached.samples.clone(),
+                self.state.device_rate as u32,
+                cached.channels as usize,
+                speed,
+            );
+            fbp.set_path(current_path);
+            *self.state.full_buffer.lock().unwrap() = Some(Arc::new(fbp));
+            *self.state.streaming.lock().unwrap() = None;
+            self.clear_playback();
+            return Ok(());
+        }
+
+        let _ = self.cache.promote_active_to_completed();
+
+        if let Some(cached) = self.cache.get(&current_path) {
+            let mut fbp = FullBufferPlayback::new(
+                cached.samples.clone(),
+                self.state.device_rate as u32,
+                cached.channels as usize,
+                speed,
+            );
+            fbp.set_path(current_path);
+            *self.state.full_buffer.lock().unwrap() = Some(Arc::new(fbp));
+            *self.state.streaming.lock().unwrap() = None;
+            self.clear_playback();
+            return Ok(());
+        }
+
         let streaming = self.state.streaming.lock().unwrap().take();
         let streaming = match streaming {
             Some(s) => s,
@@ -417,17 +551,13 @@ impl AudioEngine {
         let decoded = streaming.decoded_buffer.lock().unwrap();
         let device_rate = self.state.device_rate as u32;
         let channels = streaming.channels();
-        let speed = f64::from_bits(self.state.speed.load(Ordering::Relaxed));
-        let path = self.state.current_path.lock().unwrap().clone();
 
-        let mut fbp = FullBufferPlayback::new(decoded.clone(), device_rate, channels, speed);
-        fbp.set_path(path);
+        let mut fbp =
+            FullBufferPlayback::new(Arc::new(decoded.clone()), device_rate, channels, speed);
+        fbp.set_path(current_path);
 
         *self.state.full_buffer.lock().unwrap() = Some(Arc::new(fbp));
-
-        if let Some(pb) = self.state.playback.lock().unwrap().take() {
-            pb.is_playing.store(false, Ordering::Relaxed);
-        }
+        self.clear_playback();
 
         Ok(())
     }
@@ -534,7 +664,7 @@ fn create_i16_callback(
 
 impl Default for AudioEngine {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(AudioCache::new()))
     }
 }
 
