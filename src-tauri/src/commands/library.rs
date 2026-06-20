@@ -193,22 +193,25 @@ fn apply_updates(song: &mut Song, update: SongUpdate) -> Result<(), String> {
     Ok(())
 }
 
-fn load_library() -> Result<Library, String> {
+pub(crate) fn load_library() -> Result<Library, String> {
     match storage::read_json::<Library>(LIBRARY_FILE) {
         Ok(lib) => Ok(lib),
         Err(_) => Ok(Library::new()),
     }
 }
 
-fn save_library(library: &Library) -> Result<(), String> {
+pub(crate) fn save_library(library: &Library) -> Result<(), String> {
     storage::write_json(LIBRARY_FILE, library)
 }
 
-fn find_song_by_id<'a>(library: &'a Library, id: &SongId) -> Option<&'a Song> {
+pub(crate) fn find_song_by_id<'a>(library: &'a Library, id: &SongId) -> Option<&'a Song> {
     library.songs.iter().find(|s| &s.id == id)
 }
 
-fn find_song_by_id_mut<'a>(library: &'a mut Library, id: &SongId) -> Option<&'a mut Song> {
+pub(crate) fn find_song_by_id_mut<'a>(
+    library: &'a mut Library,
+    id: &SongId,
+) -> Option<&'a mut Song> {
     library.songs.iter_mut().find(|s| &s.id == id)
 }
 

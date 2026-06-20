@@ -72,7 +72,7 @@ Plan de desarrollo para Bassical v1.0, una aplicación desktop para práctica de
 - [X] Waveform renderizada correctamente en Canvas
 - [X] RF-05.2: Control de velocidad entre 25%-100% en incrementos de 5%
 - [X] RF-05.2: Sin cambio de tono al variar velocidad (pitch-shifting con SoundTouch)
-- [ ] RNF-01.2: Sin artefactos perceptibles en rango 50%-100%
+- [X] RNF-01.2: Sin artefactos perceptibles en rango 50%-100%
 
 ---
 
@@ -80,26 +80,33 @@ Plan de desarrollo para Bassical v1.0, una aplicación desktop para práctica de
 
 **Objetivo**: Sistema de timing points completo (RF-02) - **Módulo diferenciador**
 
+> **Alcance expandido (post-plan, ver `docs/DECISIONS.md`)**: además de RF-02, este sprint incluye zoom milimétrico del waveform, time signature por timing point (3/4, 4/4, 6/8...), entrada directa de BPM+offset (no solo tap) y tap con T / barra espaciadora / click (estilo osu!). El **metrónomo audible se diferencia a Sprint 5** (ADR-002); la cuadrícula visual de beats/barras sí entra aquí.
+
 | Tarea | Detalle |
 |-------|---------|
-| Calibración asistida | Captura de tecla `T`, cálculo de BPM promedio y offset (RF-02.2) |
+| Modelo de datos + persistencia | `TimingPoint` con `timeSignature` opcional (default 4/4, ADR-001); archivo único `songs/<uuid>.bassical.json` con `tab`/`practice` omitibles (ADR-003) |
+| Calibración asistida | Captura vía tecla `T`, **barra espaciadora** y **click** (estilo osu!); cálculo de BPM promedio y offset (RF-02.2) |
+| Tap de baja latencia | `CalibrationState` lock-free, dominio del reloj de audio, compensación dinámica de latencia (ADR-004) |
 | Timing points múltiples | Agregar, editar, eliminar timing points individualmente (RF-02.5) |
-| Marcadores sobre waveform | Líneas verticales arrastrables (RF-02.3) |
-| Cuadrícula de beats | Visualización de beats derivada de timing points (RF-02.4) |
+| Entrada directa de BPM | Definir timing point sin tap, escribiendo BPM (3 decimales) + offset (ms) + compás |
+| Marcadores sobre waveform | Líneas verticales arrastrables + handle (RF-02.3) |
+| Cuadrícula de beats/barras | Beats y downbeats derivados de timing points + time signature (RF-02.4) |
+| Zoom milimétrico | Zoom +/−, `Ctrl+scroll`, pan, nivel de zoom visible; peaks reales por viewport |
 | Ajuste fino | Input numérico en ms + drag sobre waveform |
 | Feedback visual | BPM detectado en tiempo real durante calibración |
 
-**Entregable**: Calibración completa por pulsación de tecla con visualización y ajuste manual sobre waveform.
+**Entregable**: Calibración completa (tap + entrada directa) con visualización, zoom milimétrico, time signature y ajuste manual sobre waveform. Cuadrícula de barras visible. Sin metrónomo audible (Sprint 5).
 
 ### Criterios de Aceptación
-- [ ] RF-02.1: Definir uno o múltiples timing points (offset ms, BPM)
-- [ ] RF-02.2: Calibración asistida con pulsación de tecla T
-- [ ] RF-02.3: Waveform con timing points superpuestos como marcadores
-- [ ] RF-02.3: Ajuste de offset por arrastre o input numérico
-- [ ] RF-02.4: Cuadrícula de beats derivada de timing points
-- [ ] RF-02.5: CRUD individual de timing points
-- [ ] RF-02.6: Actualización en tiempo real sobre waveform
-- [ ] RNF-01.1: Latencia de pulsación ≤ 10 ms
+- [ ] RF-02.1: Definir uno o múltiples timing points (offset ms, BPM, time signature opcional)
+- [ ] RF-02.2: Calibración asistida con T, espacio y click; BPM y offset detectados
+- [ ] RF-02.3: Waveform con timing points superpuestos como marcadores arrastrables
+- [ ] RF-02.3: Ajuste de offset por arrastre o input numérico (ms)
+- [ ] RF-02.4: Cuadrícula de beats/barras derivada de timing points (4/4, 3/4, 6/8)
+- [ ] RF-02.5: CRUD individual de timing points (incluida entrada directa sin tap)
+- [ ] RF-02.6: Actualización en tiempo real sobre waveform al editar timing points
+- [ ] Zoom milimétrico del waveform con detalle preservado
+- [ ] RNF-01.1: Latencia de pulsación ≤ 10 ms (compensación dinámica, ADR-004)
 - [ ] Error de alineación ≤ 5 ms con canciones de referencia
 
 ---

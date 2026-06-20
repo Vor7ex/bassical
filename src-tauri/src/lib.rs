@@ -44,6 +44,9 @@ pub fn run() {
             commands::audio::stop_playback,
             commands::audio::activate_full_buffer_playback,
             commands::audio::is_full_buffer_ready,
+            commands::calibration::get_calibration,
+            commands::calibration::save_timing_points,
+            commands::calibration::clear_calibration,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
