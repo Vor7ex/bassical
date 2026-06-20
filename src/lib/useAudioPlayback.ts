@@ -45,13 +45,10 @@ export function useAudioPlayback(audioPath: string) {
       loadedPathRef.current = audioPath;
     }
 
-    loadAudio(audioPath)
+    loadAudio(audioPath, useSessionStore.getState().isPlaying)
       .then((info) => {
         setAudioState(info);
         startDecodePolling();
-        if (useSessionStore.getState().isPlaying) {
-          playAudio().catch(() => {});
-        }
       })
       .catch((err) => {
         console.error("Error cargando audio:", err);

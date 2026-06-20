@@ -186,10 +186,8 @@ impl StreamingDecoder {
             return;
         }
 
-        if let Ok(decoded) = self.decoder.decode(packet) {
-            if let GenericAudioBufferRef::F32(buf) = decoded {
-                copy_f32_samples(&buf, samples);
-            }
+        if let Ok(GenericAudioBufferRef::F32(buf)) = self.decoder.decode(packet) {
+            copy_f32_samples(buf, samples);
         }
     }
 
@@ -202,6 +200,7 @@ impl StreamingDecoder {
     }
 }
 
+#[allow(clippy::needless_range_loop)]
 fn copy_f32_samples(buf: &symphonia::core::audio::AudioBuffer<f32>, samples: &mut Vec<f32>) {
     let planes: Vec<&[f32]> = buf.iter_planes().collect();
     let num_frames = buf.frames();
