@@ -25,6 +25,8 @@ pnpm build
 pnpm tauri build
 
 # Rust: check backend compiles
+# NOTE: soundtouch-ffi requires LIBCLANG_PATH for bindgen on Windows
+set LIBCLANG_PATH=C:\Program Files\LLVM\bin
 cargo check            # run from src-tauri/
 
 # Rust: run clippy linter
@@ -92,10 +94,13 @@ IPC pattern: Frontend calls `invoke<ReturnType>('command_name', { args })`. Back
 
 ```
 src/                          # Frontend
-├── components/Layout/        # Shared layout components
-├── views/                    # Page-level view components
+├── components/
+│   ├── Layout/               # Shared layout components
+│   └── Audio/                # PlaybackControls, WaveformView
+├── views/                    # Page-level view components (LibraryView, AudioView)
 ├── lib/
 │   ├── audio.ts              # IPC wrappers for audio commands
+│   ├── usePracticePlayback.ts # Playback hook (decode, speed, position)
 │   ├── types/                # TypeScript interfaces
 │   └── store/                # Zustand state stores
 ├── App.tsx                   # Root component
@@ -104,13 +109,17 @@ src/                          # Frontend
 src-tauri/src/                # Backend
 ├── commands/                 # #[tauri::command] IPC handlers
 │   ├── mod.rs
-│   └── library.rs
+│   ├── library.rs
+│   └── audio.rs              # Audio IPC: play, pause, seek, speed, decode
 ├── models/                   # Domain types (newtypes, structs)
 │   ├── song.rs
 │   └── tab.rs
 ├── persistence/              # JSON read/write to AppData
 │   └── storage.rs
-├── audio/                    # Audio engine (cpal) - Sprint 3
+├── audio/                    # Audio engine
+│   ├── engine.rs             # cpal stream, PlaybackState, dual-mode callback
+│   ├── decoder.rs            # symphonia streaming decoder
+│   └── buffer_playback.rs    # Full-buffer playback with SoundTouch time-stretching
 ├── calibration/              # Timing point logic - Sprint 4
 ├── parser/                   # Guitar Pro parser - Sprint 6
 ├── lib.rs                    # Tauri builder + command registration
@@ -119,7 +128,17 @@ src-tauri/src/                # Backend
 
 ## Sprint Status
 
-Currently in **Sprint 1** (Fundamentals). Audio, calibration, parser modules are stubs. When implementing new commands: add to `commands/`, register in `lib.rs` `invoke_handler`, create IPC wrapper in `src/lib/`.
+Currently in **Sprint 3** (Audio Engine). Sprint 1 (fundamentals) and Sprint 2 (library CRUD) complete. Audio playback functional with dual-mode architecture: streaming during decode, full-buffer with SoundTouch time-stretching after decode. Calibration, parser modules are stubs.
+
+## Audio Architecture
+
+Dual-mode playback system:
+- **Streaming mode**: Active during waveform decode. Uses ring buffer + cpal callback. Speed control disabled.
+- **Full-buffer mode**: Activates after complete decode. Decoded samples stored in memory, processed through SoundTouch for time-stretching (pitch-preserving speed change 25%-100%). Speed control enabled.
+
+Key crates: `cpal` (audio output), `symphonia` (decoding), `ringbuf` (lock-free buffer), `soundtouch` (time-stretching via FFI).
+
+SoundTouch FFI requires LLVM/Clang for bindgen. On Windows: `set LIBCLANG_PATH=C:\Program Files\LLVM\bin`.
 
 ## Key Constraints
 

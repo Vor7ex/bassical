@@ -14,6 +14,7 @@ export function AudioView({ song, onBack }: AudioViewProps) {
     currentPositionMs,
     audioState,
     decodeProgress,
+    fullBufferReady,
     handlePlayPause,
     handleSeek,
     handleSpeedChange,
@@ -76,6 +77,7 @@ export function AudioView({ song, onBack }: AudioViewProps) {
         currentPositionMs={currentPositionMs}
         durationMs={audioState?.durationMs ?? 0}
         playbackSpeed={playbackSpeed}
+        speedDisabled={!fullBufferReady}
         onPlayPause={handlePlayPause}
         onSeek={handleSeek}
         onSpeedChange={handleSpeedChange}

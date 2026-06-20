@@ -65,7 +65,7 @@ El diferenciador técnico central es el **sistema de calibración de tempo varia
 | Rust | Lenguaje del backend |
 | Tauri 2 | Framework desktop (bridge IPC Rust ↔ frontend) |
 | `cpal` | Acceso al hardware de audio (baja latencia) |
-| `rubato` | Pitch-shifting independiente del tempo |
+| `soundtouch` | Pitch-shifting independiente del tempo (via FFI) |
 | `serde` / `serde_json` | Serialización de tabs y biblioteca |
 
 ### Distribución
@@ -102,7 +102,7 @@ Bassical sigue una arquitectura de dos capas desacopladas, comunicadas por el IP
 │                                                      │
 │  ┌──────────────┐  ┌────────────┐  ┌──────────────┐  │
 │  │ Audio engine │  │ Calibrador │  │ Persistencia │  │
-│  │ cpal · rubato│  │ BPM·offset │  │ JSON·AppData │  │
+│  │ cpal · soundtouch│  │ BPM·offset │  │ JSON·AppData │  │
 │  └──────────────┘  └────────────┘  └──────────────┘  │
 │                                                      │
 │  ┌──────────────────────────────────────────────┐    │
@@ -245,42 +245,49 @@ El calibrador funciona igual que el editor de beatmaps de osu!:
 bassical/
 ├── src/                        # Frontend (TypeScript)
 │   ├── components/
-│   │   ├── TabEditor/          # Editor de tablatura
-│   │   ├── WaveformView/       # Visualización de waveform + timing points
-│   │   ├── Player/             # Controles de reproducción
+│   │   ├── Audio/              # PlaybackControls, WaveformView
+│   │   ├── Layout/             # Shared layout components
 │   │   └── Library/            # Biblioteca de canciones
+│   ├── views/
+│   │   ├── LibraryView.tsx     # Vista de biblioteca
+│   │   └── AudioView.tsx       # Vista de reproducción + waveform
 │   ├── lib/
 │   │   ├── audio.ts            # Llamadas invoke() al backend de audio
-│   │   ├── calibration.ts      # Llamadas invoke() al calibrador
-│   │   ├── tabs.ts             # Modelo de datos de tablatura (frontend)
+│   │   ├── usePracticePlayback.ts # Hook de reproducción (decode, speed, position)
+│   │   ├── useAudioPlayback.ts # Hook de reproducción global (PlayerBar)
 │   │   └── store/              # Zustand slices
-│   │       ├── sessionStore.ts
-│   │       └── tabStore.ts
-│   └── main.ts
+│   │       └── sessionStore.ts
+│   ├── App.tsx
+│   └── main.tsx
 │
 ├── src-tauri/                  # Backend (Rust)
 │   ├── src/
 │   │   ├── main.rs
-│   │   ├── commands/           # Comandos expuestos al frontend via IPC
-│   │   │   ├── audio.rs        # play, pause, seek, set_speed
-│   │   │   ├── calibration.rs  # tap_calibration, set_timing_point
-│   │   │   ├── library.rs      # CRUD de canciones
-│   │   │   └── tabs.rs         # parse_gp, export_pdf, save_tab
+│   │   ├── lib.rs              # Tauri builder + command registration
+│   │   ├── commands/
+│   │   │   ├── audio.rs        # play, pause, seek, speed, decode, full-buffer
+│   │   │   └── library.rs      # CRUD de canciones
 │   │   ├── audio/
-│   │   │   ├── engine.rs       # Motor de reproducción (cpal)
-│   │   │   └── pitch.rs        # Pitch-shifting (rubato)
-│   │   ├── calibration/
-│   │   │   └── mod.rs          # Lógica de timing points
+│   │   │   ├── engine.rs       # Motor de reproducción (cpal, dual-mode callback)
+│   │   │   ├── decoder.rs      # Streaming decoder (symphonia)
+│   │   │   └── buffer_playback.rs # Full-buffer + SoundTouch time-stretching
+│   │   ├── models/
+│   │   │   ├── song.rs
+│   │   │   └── tab.rs
 │   │   ├── persistence/
-│   │   │   └── mod.rs          # Lectura/escritura JSON en AppData
-│   │   └── parser/
-│   │       └── mod.rs          # Parser de archivos Guitar Pro
+│   │   │   └── storage.rs      # JSON read/write en AppData
+│   │   ├── calibration/        # Timing point logic (stub)
+│   │   └── parser/             # Guitar Pro parser (stub)
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 │
-├── public/
+├── docs/
+│   ├── PRD.md                  # SRS v1.1
+│   ├── SPRINT_PLAN.md          # Plan de 6 sprints
+│   └── DESIGN.md
 ├── package.json
 ├── tsconfig.json
+├── AGENTS.md                   # Instructions for AI agents
 └── README.md
 ```
 
@@ -390,14 +397,14 @@ Bassical almacena todos sus datos en `%APPDATA%\Bassical\`:
 
 ### v1.0 — Core (en desarrollo)
 - [x] Definición de requerimientos (SRS v1.1)
-- [ ] Diseño arquitectónico
-- [ ] Prototipo: reproducción de audio local vía Rust + Tauri
+- [x] Diseño arquitectónico
+- [x] Prototipo: reproducción de audio local vía Rust + Tauri
 - [ ] Calibrador de timing points (tap + waveform)
 - [ ] Editor de tablatura básico
 - [ ] Play-along sincronizado con cursor
-- [ ] Control de velocidad con pitch-shifting
+- [x] Control de velocidad con pitch-shifting (SoundTouch)
 - [ ] Loop de sección
-- [ ] Persistencia local en AppData
+- [x] Persistencia local en AppData
 - [ ] Importación de Guitar Pro (.gp / .gp5 / .gpx)
 - [ ] Exportación a PDF y JSON
 - [ ] Instalador `.exe` para Windows

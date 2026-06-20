@@ -62,16 +62,16 @@ Plan de desarrollo para Bassical v1.0, una aplicación desktop para práctica de
 | Soporte de formatos | MP3, WAV, FLAC, OGG |
 | Waveform view | Renderizar forma de onda con Canvas API |
 | Controles básicos | Play, pause, seek |
-| Pitch-shifting | Implementar `rubato` para cambio de velocidad sin cambio de tono (RF-05.2) |
+| Pitch-shifting | Implementar `soundtouch` via FFI para cambio de velocidad sin cambio de tono (RF-05.2) |
 
 **Entregable**: Reproducción de audio local con visualización de waveform y control de velocidad (25%-100%).
 
 ### Criterios de Aceptación
-- [ ] Reproducir archivos MP3, WAV, FLAC, OGG
-- [ ] Latencia de reproducción aceptable (< 50ms)
-- [ ] Waveform renderizada correctamente en Canvas
-- [ ] RF-05.2: Control de velocidad entre 25%-100% en incrementos de 5%
-- [ ] RF-05.2: Sin cambio de tono al variar velocidad (pitch-shifting)
+- [X] Reproducir archivos MP3, WAV, FLAC, OGG
+- [X] Latencia de reproducción aceptable (< 50ms)
+- [X] Waveform renderizada correctamente en Canvas
+- [X] RF-05.2: Control de velocidad entre 25%-100% en incrementos de 5%
+- [X] RF-05.2: Sin cambio de tono al variar velocidad (pitch-shifting con SoundTouch)
 - [ ] RNF-01.2: Sin artefactos perceptibles en rango 50%-100%
 
 ---
@@ -196,7 +196,7 @@ Plan de desarrollo para Bassical v1.0, una aplicación desktop para práctica de
 | Rust | Lenguaje del backend |
 | Tauri 2 | Framework desktop (bridge IPC Rust ↔ frontend) |
 | `cpal` | Acceso al hardware de audio (baja latencia) |
-| `rubato` | Pitch-shifting independiente del tempo |
+| `soundtouch` | Pitch-shifting independiente del tempo (via FFI) |
 | `serde` / `serde_json` | Serialización de tabs y biblioteca |
 
 ---
@@ -223,7 +223,7 @@ Sprint 6 (Import/Export + Pulido) ← requiere Editor completo
 
 1. **Framework Frontend**: Definir en Sprint 1. React tiene más ecosistema; Svelte es más ligero.
 2. **Parser Guitar Pro**: Puede ser el componente más complejo. Considerar usar crates Rust existentes o implementar parsing incremental.
-3. **Pitch-shifting**: `rubato` es la librería recomendada. Verificar calidad en el rango 25%-50%.
+3. **Pitch-shifting**: `soundtouch` (via FFI) es la librería utilizada. Requiere LLVM/Clang para bindgen. Verificar calidad en el rango 25%-50%.
 4. **Latencia de calibración**: El requisito de ≤ 10ms es estricto. Evitar bloques en el thread principal de Rust.
 5. **Persistencia**: Usar `serde_json` con atomic writes para evitar corrupción de datos.
 

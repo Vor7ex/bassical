@@ -40,6 +40,8 @@ pub fn run() {
             commands::audio::is_audio_playing,
             commands::audio::start_playback,
             commands::audio::stop_playback,
+            commands::audio::activate_full_buffer_playback,
+            commands::audio::is_full_buffer_ready,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
