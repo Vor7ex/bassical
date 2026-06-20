@@ -16,6 +16,7 @@ pub struct FullBufferPlayback {
     flushed: AtomicBool,
     tempo: AtomicU64,
     duration_ms: f64,
+    path: String,
 }
 
 unsafe impl Send for FullBufferPlayback {}
@@ -60,7 +61,12 @@ impl FullBufferPlayback {
             flushed: AtomicBool::new(false),
             tempo: AtomicU64::new(initial_speed.to_bits()),
             duration_ms,
+            path: String::new(),
         }
+    }
+
+    pub fn set_path(&mut self, path: String) {
+        self.path = path;
     }
 
     pub fn play(&self) {
@@ -145,6 +151,10 @@ impl FullBufferPlayback {
 
     pub fn channels(&self) -> usize {
         self.channels
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
     }
 
     fn prefill_from(&self, st: &mut SoundTouch, from_frame: usize) {

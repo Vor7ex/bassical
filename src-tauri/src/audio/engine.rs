@@ -106,6 +106,7 @@ struct PlaybackState {
     streaming: Mutex<Option<Arc<StreamingState>>>,
     playback: Mutex<Option<Arc<StreamingState>>>,
     full_buffer: Mutex<Option<Arc<FullBufferPlayback>>>,
+    current_path: Mutex<String>,
 }
 
 pub struct AudioPlaybackInfo {
@@ -138,6 +139,7 @@ impl AudioEngine {
             streaming: Mutex::new(None),
             playback: Mutex::new(None),
             full_buffer: Mutex::new(None),
+            current_path: Mutex::new(String::new()),
         });
 
         let mut engine = AudioEngine {
@@ -150,9 +152,10 @@ impl AudioEngine {
         engine
     }
 
-    pub fn set_current_stream(&mut self, streaming: Arc<StreamingState>) {
+    pub fn set_current_stream(&mut self, streaming: Arc<StreamingState>, path: String) {
         self.state.position.store(0, Ordering::Relaxed);
         self.state.speed.store(1.0f64.to_bits(), Ordering::Relaxed);
+        *self.state.current_path.lock().unwrap() = path;
         *self.state.streaming.lock().unwrap() = Some(streaming);
     }
 
@@ -326,15 +329,17 @@ impl AudioEngine {
     }
 
     pub fn start_playback(&mut self, path: String) -> Result<AudioPlaybackInfo, String> {
-        if let Some(ref fbp) = *self.state.full_buffer.lock().unwrap() {
-            fbp.play();
-            self.state.is_playing.store(true, Ordering::Relaxed);
+        if self.try_resume_full_buffer(&path) {
+            let fbp = self.state.full_buffer.lock().unwrap();
+            let fbp = fbp.as_ref().unwrap();
             return Ok(AudioPlaybackInfo {
                 duration_ms: fbp.duration_ms(),
                 sample_rate: fbp.sample_rate(),
                 channels: fbp.channels() as u16,
             });
         }
+
+        self.clear_full_buffer();
 
         let existing = self.state.playback.lock().unwrap().clone();
         if let Some(ref pb) = existing {
@@ -374,9 +379,30 @@ impl AudioEngine {
         Ok(info)
     }
 
+    fn try_resume_full_buffer(&self, path: &str) -> bool {
+        let fbp_guard = self.state.full_buffer.lock().unwrap();
+        match *fbp_guard {
+            Some(ref fbp) if fbp.path() == path => {
+                fbp.play();
+                self.state.is_playing.store(true, Ordering::Relaxed);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn clear_full_buffer(&self) {
+        if let Some(fbp) = self.state.full_buffer.lock().unwrap().take() {
+            fbp.pause();
+        }
+    }
+
     pub fn stop_playback(&mut self) {
         if let Some(pb) = self.state.playback.lock().unwrap().take() {
             pb.is_playing.store(false, Ordering::Relaxed);
+        }
+        if let Some(fbp) = self.state.full_buffer.lock().unwrap().take() {
+            fbp.pause();
         }
         self.state.is_playing.store(false, Ordering::Relaxed);
     }
@@ -392,8 +418,10 @@ impl AudioEngine {
         let device_rate = self.state.device_rate as u32;
         let channels = streaming.channels();
         let speed = f64::from_bits(self.state.speed.load(Ordering::Relaxed));
+        let path = self.state.current_path.lock().unwrap().clone();
 
-        let fbp = FullBufferPlayback::new(decoded.clone(), device_rate, channels, speed);
+        let mut fbp = FullBufferPlayback::new(decoded.clone(), device_rate, channels, speed);
+        fbp.set_path(path);
 
         *self.state.full_buffer.lock().unwrap() = Some(Arc::new(fbp));
 

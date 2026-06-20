@@ -34,7 +34,7 @@ fn setup_stream(
     let initial_peaks = streaming.get_peaks();
     let streaming = std::sync::Arc::new(streaming);
 
-    engine.set_current_stream(streaming.clone());
+    engine.set_current_stream(streaming.clone(), path.clone());
 
     spawn_decoder_thread(path, streaming);
 
