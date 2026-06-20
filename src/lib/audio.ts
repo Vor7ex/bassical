@@ -67,6 +67,14 @@ export async function stopPlayback(): Promise<void> {
   return await invoke<void>("stop_playback");
 }
 
+export async function activateFullBufferPlayback(): Promise<void> {
+  return await invoke<void>("activate_full_buffer_playback");
+}
+
+export async function isFullBufferReady(): Promise<boolean> {
+  return await invoke<boolean>("is_full_buffer_ready");
+}
+
 export async function extractMetadata(filePath: string): Promise<SongMetadata> {
   return await invoke<SongMetadata>("extract_metadata", { filePath });
 }

@@ -3,6 +3,7 @@ interface PlaybackControlsProps {
   currentPositionMs: number;
   durationMs: number;
   playbackSpeed: number;
+  speedDisabled?: boolean;
   onPlayPause: () => void;
   onSeek: (positionMs: number) => void;
   onSpeedChange: (speed: number) => void;
@@ -20,6 +21,7 @@ export function PlaybackControls({
   currentPositionMs,
   durationMs,
   playbackSpeed,
+  speedDisabled = false,
   onPlayPause,
   onSeek,
   onSpeedChange,
@@ -41,7 +43,7 @@ export function PlaybackControls({
     onSeek(ratio * durationMs);
   }
 
-  const progress = durationMs > 0 ? (currentPositionMs / durationMs) * 100 : 0;
+  const progress = durationMs > 0 ? Math.min(100, Math.max(0, (currentPositionMs / durationMs) * 100)) : 0;
 
   return (
     <div className="bg-bg-surface border-t border-border-subtle px-4 h-12 flex items-center gap-3 shrink-0">
@@ -90,7 +92,7 @@ export function PlaybackControls({
       <div className="flex items-center gap-1.5 ml-2">
         <button
           onClick={handleSpeedDecrease}
-          disabled={playbackSpeed <= 0.25}
+          disabled={playbackSpeed <= 0.25 || speedDisabled}
           className="bg-bg-input text-text-secondary w-7 h-7 flex items-center justify-center rounded-sm border border-border-subtle hover:text-text-primary hover:border-border-strong cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed transition-all text-caption"
           aria-label="Reducir velocidad"
         >
@@ -101,7 +103,7 @@ export function PlaybackControls({
         </span>
         <button
           onClick={handleSpeedIncrease}
-          disabled={playbackSpeed >= 1.0}
+          disabled={playbackSpeed >= 1.0 || speedDisabled}
           className="bg-bg-input text-text-secondary w-7 h-7 flex items-center justify-center rounded-sm border border-border-subtle hover:text-text-primary hover:border-border-strong cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed transition-all text-caption"
           aria-label="Aumentar velocidad"
         >

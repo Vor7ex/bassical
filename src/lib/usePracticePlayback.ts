@@ -9,6 +9,8 @@ import {
   getAudioPosition,
   getDecodeProgress,
   getDecodedPeaks,
+  isAudioPlaying,
+  activateFullBufferPlayback,
 } from "@/lib/audio";
 
 interface AudioState {
@@ -28,6 +30,7 @@ export function usePracticePlayback(audioPath: string) {
   const [audioState, setAudioState] = useState<AudioState | null>(null);
   const [decodeProgress, setDecodeProgress] = useState(0);
   const [playbackSpeed, setPlaybackSpeedState] = useState(1.0);
+  const [fullBufferReady, setFullBufferReady] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const decodePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -39,6 +42,7 @@ export function usePracticePlayback(audioPath: string) {
     lastPeakUpdateRef.current = 0;
     setDecodeProgress(0);
     decodeFinalizedRef.current = false;
+    setFullBufferReady(false);
 
     if (!audioPath) {
       setAudioState(null);
@@ -108,6 +112,13 @@ export function usePracticePlayback(audioPath: string) {
       setAudioState((prev) => (prev ? { ...prev, peaks } : null));
     }
     setDecodeProgress(1.0);
+
+    try {
+      await activateFullBufferPlayback();
+      setFullBufferReady(true);
+    } catch (err) {
+      console.error("Error activando full buffer playback:", err);
+    }
   }
 
   useEffect(() => {
@@ -117,8 +128,13 @@ export function usePracticePlayback(audioPath: string) {
       return;
     }
     pollRef.current = setInterval(() => {
-      getAudioPosition()
-        .then(setCurrentPositionMs)
+      Promise.all([getAudioPosition(), isAudioPlaying()])
+        .then(([pos, playing]) => {
+          setCurrentPositionMs(pos);
+          if (!playing) {
+            setIsPlaying(false);
+          }
+        })
         .catch(() => {});
     }, 100);
     return () => {
@@ -171,6 +187,7 @@ export function usePracticePlayback(audioPath: string) {
     currentPositionMs,
     audioState,
     decodeProgress,
+    fullBufferReady,
     handlePlayPause,
     handleSeek,
     handleSpeedChange,

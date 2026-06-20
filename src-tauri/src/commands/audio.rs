@@ -34,7 +34,7 @@ fn setup_stream(
     let initial_peaks = streaming.get_peaks();
     let streaming = std::sync::Arc::new(streaming);
 
-    engine.set_current_stream(streaming.clone());
+    engine.set_current_stream(streaming.clone(), path.clone());
 
     spawn_decoder_thread(path, streaming);
 
@@ -138,4 +138,16 @@ pub fn stop_playback(engine_state: State<AudioEngineState>) -> Result<(), String
     let mut engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
     engine.stop_playback();
     Ok(())
+}
+
+#[tauri::command]
+pub fn activate_full_buffer_playback(engine_state: State<AudioEngineState>) -> Result<(), String> {
+    let mut engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
+    engine.switch_to_full_buffer_playback()
+}
+
+#[tauri::command]
+pub fn is_full_buffer_ready(engine_state: State<AudioEngineState>) -> Result<bool, String> {
+    let engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
+    Ok(engine.is_full_buffer_ready())
 }

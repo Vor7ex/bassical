@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use super::buffer_playback::FullBufferPlayback;
 use super::decoder::{probe_file, AudioMetadata, StreamingDecoder};
 
 const PEAK_BINS: usize = 2000;
@@ -31,6 +32,7 @@ pub struct StreamingState {
     push_to_buffer: AtomicBool,
     device_channels: usize,
     device_sample_rate: f64,
+    pub decoded_buffer: Mutex<Vec<f32>>,
 }
 
 impl StreamingState {
@@ -80,6 +82,7 @@ impl StreamingState {
             push_to_buffer: AtomicBool::new(false),
             device_channels,
             device_sample_rate,
+            decoded_buffer: Mutex::new(Vec::new()),
         }
     }
 
@@ -102,6 +105,8 @@ struct PlaybackState {
     device_rate: f64,
     streaming: Mutex<Option<Arc<StreamingState>>>,
     playback: Mutex<Option<Arc<StreamingState>>>,
+    full_buffer: Mutex<Option<Arc<FullBufferPlayback>>>,
+    current_path: Mutex<String>,
 }
 
 pub struct AudioPlaybackInfo {
@@ -133,6 +138,8 @@ impl AudioEngine {
             device_rate,
             streaming: Mutex::new(None),
             playback: Mutex::new(None),
+            full_buffer: Mutex::new(None),
+            current_path: Mutex::new(String::new()),
         });
 
         let mut engine = AudioEngine {
@@ -145,9 +152,10 @@ impl AudioEngine {
         engine
     }
 
-    pub fn set_current_stream(&mut self, streaming: Arc<StreamingState>) {
+    pub fn set_current_stream(&mut self, streaming: Arc<StreamingState>, path: String) {
         self.state.position.store(0, Ordering::Relaxed);
         self.state.speed.store(1.0f64.to_bits(), Ordering::Relaxed);
+        *self.state.current_path.lock().unwrap() = path;
         *self.state.streaming.lock().unwrap() = Some(streaming);
     }
 
@@ -185,6 +193,10 @@ impl AudioEngine {
 
     pub fn play(&mut self) -> Result<(), String> {
         self.state.is_playing.store(true, Ordering::Relaxed);
+        if let Some(ref fbp) = *self.state.full_buffer.lock().unwrap() {
+            fbp.play();
+            return Ok(());
+        }
         let pb = self.state.playback.lock().unwrap();
         if let Some(ref s) = *pb {
             s.is_playing.store(true, Ordering::Relaxed);
@@ -196,6 +208,10 @@ impl AudioEngine {
 
     pub fn pause(&mut self) -> Result<(), String> {
         self.state.is_playing.store(false, Ordering::Relaxed);
+        if let Some(ref fbp) = *self.state.full_buffer.lock().unwrap() {
+            fbp.pause();
+            return Ok(());
+        }
         let pb = self.state.playback.lock().unwrap();
         if let Some(ref s) = *pb {
             s.is_playing.store(false, Ordering::Relaxed);
@@ -206,6 +222,15 @@ impl AudioEngine {
     }
 
     pub fn seek(&self, position_ms: f64) -> Result<(), String> {
+        if let Some(ref fbp) = *self.state.full_buffer.lock().unwrap() {
+            fbp.seek_to_ms(position_ms);
+            let frame = (position_ms / 1000.0 * fbp.sample_rate() as f64) as u64;
+            self.state
+                .position
+                .store(frame * fbp.channels() as u64, Ordering::Relaxed);
+            return Ok(());
+        }
+
         let streaming = {
             let pb = self.state.playback.lock().unwrap();
             if let Some(ref s) = *pb {
@@ -235,10 +260,19 @@ impl AudioEngine {
     pub fn set_speed(&mut self, speed: f64) -> Result<(), String> {
         let clamped = speed.clamp(0.25, 1.0);
         self.state.speed.store(clamped.to_bits(), Ordering::Relaxed);
+
+        if let Some(ref fbp) = *self.state.full_buffer.lock().unwrap() {
+            fbp.set_tempo(clamped);
+        }
+
         Ok(())
     }
 
     pub fn get_position_ms(&self) -> f64 {
+        if let Some(ref fbp) = *self.state.full_buffer.lock().unwrap() {
+            return fbp.get_position_ms();
+        }
+
         let streaming = {
             let guard = self.state.streaming.lock().unwrap();
             guard.clone()
@@ -295,6 +329,18 @@ impl AudioEngine {
     }
 
     pub fn start_playback(&mut self, path: String) -> Result<AudioPlaybackInfo, String> {
+        if self.try_resume_full_buffer(&path) {
+            let fbp = self.state.full_buffer.lock().unwrap();
+            let fbp = fbp.as_ref().unwrap();
+            return Ok(AudioPlaybackInfo {
+                duration_ms: fbp.duration_ms(),
+                sample_rate: fbp.sample_rate(),
+                channels: fbp.channels() as u16,
+            });
+        }
+
+        self.clear_full_buffer();
+
         let existing = self.state.playback.lock().unwrap().clone();
         if let Some(ref pb) = existing {
             if !pb.is_done.load(Ordering::Acquire) {
@@ -333,11 +379,61 @@ impl AudioEngine {
         Ok(info)
     }
 
+    fn try_resume_full_buffer(&self, path: &str) -> bool {
+        let fbp_guard = self.state.full_buffer.lock().unwrap();
+        match *fbp_guard {
+            Some(ref fbp) if fbp.path() == path => {
+                fbp.play();
+                self.state.is_playing.store(true, Ordering::Relaxed);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn clear_full_buffer(&self) {
+        if let Some(fbp) = self.state.full_buffer.lock().unwrap().take() {
+            fbp.pause();
+        }
+    }
+
     pub fn stop_playback(&mut self) {
         if let Some(pb) = self.state.playback.lock().unwrap().take() {
             pb.is_playing.store(false, Ordering::Relaxed);
         }
+        if let Some(fbp) = self.state.full_buffer.lock().unwrap().take() {
+            fbp.pause();
+        }
         self.state.is_playing.store(false, Ordering::Relaxed);
+    }
+
+    pub fn switch_to_full_buffer_playback(&mut self) -> Result<(), String> {
+        let streaming = self.state.streaming.lock().unwrap().take();
+        let streaming = match streaming {
+            Some(s) => s,
+            None => return Err("No streaming state".to_string()),
+        };
+
+        let decoded = streaming.decoded_buffer.lock().unwrap();
+        let device_rate = self.state.device_rate as u32;
+        let channels = streaming.channels();
+        let speed = f64::from_bits(self.state.speed.load(Ordering::Relaxed));
+        let path = self.state.current_path.lock().unwrap().clone();
+
+        let mut fbp = FullBufferPlayback::new(decoded.clone(), device_rate, channels, speed);
+        fbp.set_path(path);
+
+        *self.state.full_buffer.lock().unwrap() = Some(Arc::new(fbp));
+
+        if let Some(pb) = self.state.playback.lock().unwrap().take() {
+            pb.is_playing.store(false, Ordering::Relaxed);
+        }
+
+        Ok(())
+    }
+
+    pub fn is_full_buffer_ready(&self) -> bool {
+        self.state.full_buffer.lock().unwrap().is_some()
     }
 }
 
@@ -352,6 +448,26 @@ macro_rules! create_streaming_callback {
             if !s.is_playing.load(Ordering::Relaxed) {
                 data.fill($zero);
                 return;
+            }
+
+            {
+                let fbp_guard = s.full_buffer.lock().unwrap();
+                if let Some(ref fbp) = *fbp_guard {
+                    let ch = fbp.channels();
+                    let frames_needed = data.len() / ch;
+                    let samples = fbp.feed_and_receive(frames_needed);
+                    for (i, sample) in data.iter_mut().enumerate() {
+                        *sample = if i < samples.len() {
+                            $convert(samples[i])
+                        } else {
+                            $zero
+                        };
+                    }
+                    if fbp.is_done() {
+                        s.is_playing.store(false, Ordering::Relaxed);
+                    }
+                    return;
+                }
             }
 
             let streaming = {
@@ -523,6 +639,10 @@ fn process_decoded_chunk(
 ) {
     let resampled = resample_chunk(chunk, params.source_channels, params.ratio);
     let total_source = streaming.metadata.total_frames;
+
+    if let Ok(mut buf) = streaming.decoded_buffer.lock() {
+        buf.extend_from_slice(&resampled);
+    }
 
     if !streaming.push_to_buffer.load(Ordering::Acquire) && total_source > 0 {
         let mut peaks = streaming.peaks.lock().unwrap();
