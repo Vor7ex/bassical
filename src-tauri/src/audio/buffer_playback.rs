@@ -11,7 +11,6 @@ pub struct FullBufferPlayback {
     total_frames: usize,
     soundtouch: std::sync::Mutex<SoundTouch>,
     read_position: AtomicU64,
-    output_position: AtomicU64,
     is_playing: AtomicBool,
     is_done: AtomicBool,
     flushed: AtomicBool,
@@ -56,7 +55,6 @@ impl FullBufferPlayback {
             total_frames,
             soundtouch: std::sync::Mutex::new(st),
             read_position: AtomicU64::new(initial_read as u64),
-            output_position: AtomicU64::new(0),
             is_playing: AtomicBool::new(false),
             is_done: AtomicBool::new(false),
             flushed: AtomicBool::new(false),
@@ -77,7 +75,6 @@ impl FullBufferPlayback {
         let frame = ((ms / 1000.0) * self.sample_rate as f64) as u64;
         let clamped = frame.min(self.total_frames as u64);
         self.read_position.store(clamped, Ordering::Relaxed);
-        self.output_position.store(clamped, Ordering::Relaxed);
         self.is_done.store(false, Ordering::Relaxed);
         self.flushed.store(false, Ordering::Relaxed);
 
@@ -100,7 +97,6 @@ impl FullBufferPlayback {
         let mut offset = 0usize;
 
         let Ok(mut st) = self.soundtouch.lock() else {
-            self.advance_output(frames_needed);
             return output;
         };
 
@@ -122,16 +118,14 @@ impl FullBufferPlayback {
         }
 
         self.mark_done_if_empty(&mut st, offset, frames_needed);
-        self.advance_output(frames_needed);
         output
     }
 
     pub fn get_position_ms(&self) -> f64 {
-        let pos = self.output_position.load(Ordering::Relaxed);
-        let tempo = f64::from_bits(self.tempo.load(Ordering::Relaxed));
-        if self.sample_rate > 0 && tempo > 0.0 {
-            let source_ms = (pos as f64 * tempo / self.sample_rate as f64) * 1000.0;
-            source_ms.min(self.duration_ms)
+        let frame = self.read_position.load(Ordering::Relaxed);
+        if self.sample_rate > 0 {
+            let ms = (frame as f64 / self.sample_rate as f64) * 1000.0;
+            ms.min(self.duration_ms)
         } else {
             0.0
         }
@@ -198,10 +192,5 @@ impl FullBufferPlayback {
         if ready == 0 && offset < frames_needed {
             self.is_done.store(true, Ordering::Relaxed);
         }
-    }
-
-    fn advance_output(&self, frames: usize) {
-        self.output_position
-            .fetch_add(frames as u64, Ordering::Relaxed);
     }
 }
