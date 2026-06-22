@@ -30,13 +30,6 @@ interface StartPlaybackParams {
   positionMs?: number;
 }
 
-interface PeaksInRangeParams {
-  path: string;
-  startMs: number;
-  endMs: number;
-  numBins: number;
-}
-
 interface ExtractMetadataParams {
   filePath: string;
 }
@@ -99,13 +92,6 @@ export async function activateFullBufferPlayback(): Promise<void> {
 
 export async function isFullBufferReady(): Promise<boolean> {
   return await invoke<boolean>("is_full_buffer_ready");
-}
-
-export async function getPeaksInRange(params: PeaksInRangeParams): Promise<number[]> {
-  return await invoke<number[]>("get_peaks_in_range", {
-    path: params.path,
-    range: { startMs: params.startMs, endMs: params.endMs, numBins: params.numBins },
-  });
 }
 
 export async function extractMetadata(params: ExtractMetadataParams): Promise<SongMetadata> {

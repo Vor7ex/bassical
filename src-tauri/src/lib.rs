@@ -44,7 +44,6 @@ pub fn run() {
             commands::audio::stop_playback,
             commands::audio::activate_full_buffer_playback,
             commands::audio::is_full_buffer_ready,
-            commands::audio::get_peaks_in_range,
             commands::calibration::get_calibration,
             commands::calibration::save_timing_points,
             commands::calibration::clear_calibration,

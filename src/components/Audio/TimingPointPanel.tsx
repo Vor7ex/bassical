@@ -1,0 +1,296 @@
+import { useCallback, useState } from "react";
+import type { TimingPoint, TimeSignature } from "@/lib/types";
+
+const TIME_SIG_PRESETS: { label: string; value: TimeSignature | null }[] = [
+  { label: "4/4", value: null },
+  { label: "3/4", value: { numerator: 3, denominator: 4 } },
+  { label: "2/4", value: { numerator: 2, denominator: 4 } },
+  { label: "6/8", value: { numerator: 6, denominator: 8 } },
+  { label: "12/8", value: { numerator: 12, denominator: 8 } },
+  { label: "5/4", value: { numerator: 5, denominator: 4 } },
+  { label: "7/8", value: { numerator: 7, denominator: 8 } },
+];
+
+function timeSigKey(ts: TimeSignature | undefined): string {
+  if (!ts) return "4/4";
+  return `${ts.numerator}/${ts.denominator}`;
+}
+
+function validateBpm(text: string): boolean {
+  const v = parseFloat(text);
+  return !isNaN(v) && v >= 20 && v <= 400;
+}
+
+function validateOffset(text: string, maxMs: number): boolean {
+  const v = parseFloat(text);
+  return !isNaN(v) && v >= 0 && v <= maxMs;
+}
+
+interface TimeSignatureSelectProps {
+  value: TimeSignature | undefined;
+  onChange: (ts: TimeSignature | undefined) => void;
+}
+
+function TimeSignatureSelect({ value, onChange }: TimeSignatureSelectProps) {
+  const currentKey = timeSigKey(value);
+  const [showCustom, setShowCustom] = useState(
+    !TIME_SIG_PRESETS.some((p) => timeSigKey(p.value ?? undefined) === currentKey),
+  );
+
+  const handleSelect = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const val = e.target.value;
+      if (val === "custom") {
+        setShowCustom(true);
+      } else {
+        setShowCustom(false);
+        const preset = TIME_SIG_PRESETS.find(
+          (p) => timeSigKey(p.value ?? undefined) === val,
+        );
+        onChange(preset?.value ?? undefined);
+      }
+    },
+    [onChange],
+  );
+
+  const n = value?.numerator ?? 4;
+  const d = value?.denominator ?? 4;
+
+  return (
+    <label className="flex flex-col gap-0.5">
+      <span className="text-xs text-text-tertiary uppercase tracking-wide">
+        Compás
+      </span>
+      <div className="flex items-center gap-1">
+        <select
+          value={currentKey}
+          onChange={handleSelect}
+          className="bg-bg-input border border-border-subtle text-text-primary h-7 px-2 text-caption font-mono flex-1"
+        >
+          {TIME_SIG_PRESETS.map((p) => (
+            <option key={p.label} value={p.label}>
+              {p.label}
+            </option>
+          ))}
+          <option value="custom">Custom</option>
+        </select>
+        {showCustom && (
+          <>
+            <input
+              type="number"
+              min={1}
+              max={32}
+              value={n}
+              onChange={(e) =>
+                onChange({ numerator: parseInt(e.target.value, 10) || 4, denominator: d })
+              }
+              className="bg-bg-input border border-border-subtle text-text-primary h-7 px-1.5 text-caption font-mono w-12 text-right"
+            />
+            <span className="text-text-tertiary text-caption">/</span>
+            <select
+              value={d}
+              onChange={(e) =>
+                onChange({ numerator: n, denominator: parseInt(e.target.value, 10) })
+              }
+              className="bg-bg-input border border-border-subtle text-text-primary h-7 px-1 text-caption font-mono w-14"
+            >
+              {[1, 2, 4, 8, 16, 32].map((dv) => (
+                <option key={dv} value={dv}>
+                  {dv}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+      </div>
+    </label>
+  );
+}
+
+interface TimingPointPanelProps {
+  timingPoints: TimingPoint[];
+  selectedIndex: number | null;
+  durationMs: number;
+  defaultOffsetMs: number;
+  onAdd: (offsetMs: number) => void;
+  onUpdate: (index: number, patch: Partial<TimingPoint>) => void;
+  onRemove: (index: number) => void;
+  onSelect: (index: number | null) => void;
+}
+
+export function TimingPointPanel({
+  timingPoints,
+  selectedIndex,
+  durationMs,
+  defaultOffsetMs,
+  onAdd,
+  onUpdate,
+  onRemove,
+  onSelect,
+}: TimingPointPanelProps) {
+  const handleAdd = useCallback(() => {
+    onAdd(Math.max(0, Math.min(durationMs, defaultOffsetMs)));
+  }, [defaultOffsetMs, durationMs, onAdd]);
+
+  return (
+    <div className="w-72 bg-bg-surface border-l border-border-subtle flex flex-col shrink-0">
+      <div className="bg-bg-surface border-b border-border-subtle px-3 h-8 flex items-center justify-between shrink-0">
+        <span className="text-caption text-text-secondary uppercase tracking-wide">
+          Timing Points
+        </span>
+        <button
+          onClick={handleAdd}
+          className="text-text-tertiary hover:text-text-primary w-5 h-5 flex items-center justify-center cursor-pointer transition-colors"
+          aria-label="Agregar timing point"
+        >
+          +
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {timingPoints.length === 0 ? (
+          <div className="px-3 py-6 text-center">
+            <span className="text-caption text-text-tertiary">
+              Sin timing points. Haz clic en + para agregar uno.
+            </span>
+          </div>
+        ) : (
+          timingPoints.map((tp, idx) => (
+            <TimingPointItem
+              key={`${idx}-${tp.offsetMs}`}
+              tp={tp}
+              index={idx}
+              isSelected={selectedIndex === idx}
+              durationMs={durationMs}
+              onSelect={() => onSelect(idx)}
+              onUpdate={(patch) => onUpdate(idx, patch)}
+              onRemove={() => onRemove(idx)}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface TimingPointItemProps {
+  tp: TimingPoint;
+  index: number;
+  isSelected: boolean;
+  durationMs: number;
+  onSelect: () => void;
+  onUpdate: (patch: Partial<TimingPoint>) => void;
+  onRemove: () => void;
+}
+
+function TimingPointItem({
+  tp,
+  index,
+  isSelected,
+  durationMs,
+  onSelect,
+  onUpdate,
+  onRemove,
+}: TimingPointItemProps) {
+  const bpmText = String(tp.bpm);
+  const offsetText = String(tp.offsetMs);
+  const bpmValid = validateBpm(bpmText);
+  const offsetValid = validateOffset(offsetText, durationMs);
+
+  const selectedClasses = isSelected
+    ? "border-l-2 border-accent bg-accent-bg"
+    : "border-l-2 border-transparent";
+
+  return (
+    <div
+      onClick={onSelect}
+      className={`px-3 py-2 border-b border-border-subtle cursor-pointer ${selectedClasses}`}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-caption text-text-tertiary font-mono">
+          TP #{index + 1}
+        </span>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          className="text-text-tertiary hover:text-text-danger w-4 h-4 flex items-center justify-center cursor-pointer transition-colors text-caption"
+          aria-label={`Eliminar TP #${index + 1}`}
+        >
+          ×
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <TpField
+          label="BPM"
+          initialText={bpmText}
+          isValid={bpmValid}
+          onCommit={(text) => {
+            const v = parseFloat(text);
+            if (!isNaN(v)) onUpdate({ bpm: v });
+          }}
+        />
+        <TpField
+          label="Offset"
+          initialText={offsetText}
+          isValid={offsetValid}
+          onCommit={(text) => {
+            const v = parseFloat(text);
+            if (!isNaN(v)) onUpdate({ offsetMs: v });
+          }}
+        />
+      </div>
+
+      <div className="mt-2">
+        <TimeSignatureSelect
+          value={tp.timeSignature}
+          onChange={(ts) => onUpdate({ timeSignature: ts })}
+        />
+      </div>
+    </div>
+  );
+}
+
+function TpField({
+  label,
+  initialText,
+  isValid,
+  onCommit,
+}: {
+  label: string;
+  initialText: string;
+  isValid: boolean;
+  onCommit: (text: string) => void;
+}) {
+  const [text, setText] = useState(initialText);
+
+  const handleBlur = useCallback(() => {
+    if (isValid) {
+      onCommit(text);
+    } else {
+      setText(initialText);
+    }
+  }, [isValid, onCommit, initialText, text]);
+
+  return (
+    <label className="flex flex-col gap-0.5">
+      <span className="text-xs text-text-tertiary uppercase tracking-wide">
+        {label}
+      </span>
+      <input
+        type="text"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={handleBlur}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleBlur();
+        }}
+        className={`bg-bg-input border text-text-primary h-7 px-2 text-caption font-mono text-right ${
+          isValid ? "border-border-subtle" : "border-danger-border"
+        }`}
+      />
+    </label>
+  );
+}

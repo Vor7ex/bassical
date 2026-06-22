@@ -2,8 +2,9 @@ import { useEffect, useRef, useCallback } from "react";
 import type { Song } from "@/lib/types";
 import { usePracticePlayback } from "@/lib/usePracticePlayback";
 import { useViewportPeaks } from "@/lib/useViewportPeaks";
+import { computeBeatGrid } from "@/lib/beatGrid";
 import { useCalibrationStore } from "@/lib/store";
-import { WaveformView, PlaybackControls } from "@/components/Audio";
+import { WaveformView, PlaybackControls, TimingPointMarker, TimingPointPanel } from "@/components/Audio";
 
 interface AudioViewProps {
   song: Song;
@@ -172,18 +173,14 @@ function ZoomToolbar({
 }
 
 interface WaveformAreaProps {
-  audioPath: string;
   audioState: AudioState;
   currentPositionMs: number;
-  fullBufferReady: boolean;
   onSeek: (positionMs: number) => void;
 }
 
 function WaveformArea({
-  audioPath,
   audioState,
   currentPositionMs,
-  fullBufferReady,
   onSeek,
 }: WaveformAreaProps) {
   const viewportStartMs = useCalibrationStore((s) => s.viewportStartMs);
@@ -192,15 +189,26 @@ function WaveformArea({
   const panBy = useCalibrationStore((s) => s.panBy);
   const zoomToFit = useCalibrationStore((s) => s.zoomToFit);
   const setViewport = useCalibrationStore((s) => s.setViewport);
+  const timingPoints = useCalibrationStore((s) => s.timingPoints);
+  const selectedTpIndex = useCalibrationStore((s) => s.selectedTpIndex);
+  const addTimingPoint = useCalibrationStore((s) => s.addTimingPoint);
+  const updateTimingPoint = useCalibrationStore((s) => s.updateTimingPoint);
+  const removeTimingPoint = useCalibrationStore((s) => s.removeTimingPoint);
+  const selectTimingPoint = useCalibrationStore((s) => s.selectTimingPoint);
 
   const peaks = useViewportPeaks({
-    audioPath,
     overviewPeaks: audioState.peaks,
     viewportStartMs,
     viewportEndMs,
     durationMs: audioState.durationMs,
-    fullBufferReady,
   });
+
+  const beatGrid = computeBeatGrid(
+    timingPoints,
+    viewportStartMs,
+    viewportEndMs,
+    audioState.durationMs,
+  );
 
   const handleSliderChange = useCallback(
     (newSpan: number) => {
@@ -210,44 +218,72 @@ function WaveformArea({
     [viewportStartMs, viewportEndMs, setViewport],
   );
 
+  const handleAddTp = useCallback(
+    (offsetMs: number) => {
+      addTimingPoint({ offsetMs, bpm: 120 });
+    },
+    [addTimingPoint],
+  );
+
   return (
-    <div className="flex-1 flex flex-col min-h-0 rounded-sm overflow-hidden border border-border-subtle">
-      <WaveformView
-        peaks={peaks}
-        currentPositionMs={currentPositionMs}
-        viewportStartMs={viewportStartMs}
-        viewportEndMs={viewportEndMs}
+    <div className="flex-1 flex flex-row min-h-0 gap-0">
+      <div className="flex-1 flex flex-col min-h-0 rounded-sm overflow-hidden border border-border-subtle">
+        <WaveformView
+          peaks={peaks}
+          currentPositionMs={currentPositionMs}
+          viewportStartMs={viewportStartMs}
+          viewportEndMs={viewportEndMs}
+          durationMs={audioState.durationMs}
+          onSeek={onSeek}
+          onZoom={zoomBy}
+          onPan={panBy}
+          beatGrid={beatGrid}
+        >
+          {timingPoints.map((tp, idx) => (
+            <TimingPointMarker
+              key={`${idx}-${tp.offsetMs}`}
+              tp={tp}
+              index={idx}
+              isSelected={selectedTpIndex === idx}
+              viewportStartMs={viewportStartMs}
+              viewportEndMs={viewportEndMs}
+              onSelect={selectTimingPoint}
+            />
+          ))}
+        </WaveformView>
+        <ZoomToolbar
+          viewportStartMs={viewportStartMs}
+          viewportEndMs={viewportEndMs}
+          durationMs={audioState.durationMs}
+          onSliderChange={handleSliderChange}
+          onZoomIn={() => zoomBy(1.5)}
+          onZoomOut={() => zoomBy(1 / 1.5)}
+          onFit={zoomToFit}
+        />
+      </div>
+      <TimingPointPanel
+        timingPoints={timingPoints}
+        selectedIndex={selectedTpIndex}
         durationMs={audioState.durationMs}
-        onSeek={onSeek}
-        onZoom={zoomBy}
-        onPan={panBy}
-      />
-      <ZoomToolbar
-        viewportStartMs={viewportStartMs}
-        viewportEndMs={viewportEndMs}
-        durationMs={audioState.durationMs}
-        onSliderChange={handleSliderChange}
-        onZoomIn={() => zoomBy(1.5)}
-        onZoomOut={() => zoomBy(1 / 1.5)}
-        onFit={zoomToFit}
+        defaultOffsetMs={currentPositionMs}
+        onAdd={handleAddTp}
+        onUpdate={updateTimingPoint}
+        onRemove={removeTimingPoint}
+        onSelect={selectTimingPoint}
       />
     </div>
   );
 }
 
 interface AudioMainContentProps {
-  audioPath: string;
   audioState: AudioState | null;
   currentPositionMs: number;
-  fullBufferReady: boolean;
   onSeek: (positionMs: number) => void;
 }
 
 function AudioMainContent({
-  audioPath,
   audioState,
   currentPositionMs,
-  fullBufferReady,
   onSeek,
 }: AudioMainContentProps) {
   if (!audioState) {
@@ -268,10 +304,8 @@ function AudioMainContent({
   }
   return (
     <WaveformArea
-      audioPath={audioPath}
       audioState={audioState}
       currentPositionMs={currentPositionMs}
-      fullBufferReady={fullBufferReady}
       onSeek={onSeek}
     />
   );
@@ -422,10 +456,8 @@ export function AudioView({ song, onBack }: AudioViewProps) {
 
       <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
         <AudioMainContent
-          audioPath={song.audioPath}
           audioState={audioState}
           currentPositionMs={currentPositionMs}
-          fullBufferReady={fullBufferReady}
           onSeek={handleSeek}
         />
       </div>

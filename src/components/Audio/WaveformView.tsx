@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from "react";
+import type { BeatLine } from "@/lib/beatGrid";
 
 interface WaveformViewProps {
   peaks: number[];
@@ -9,6 +10,8 @@ interface WaveformViewProps {
   onSeek: (positionMs: number) => void;
   onZoom?: (factor: number, centerMs: number) => void;
   onPan?: (deltaMs: number) => void;
+  beatGrid?: BeatLine[];
+  children?: React.ReactNode;
   height?: number;
 }
 
@@ -21,10 +24,12 @@ interface CanvasCtx {
   positionMs: number;
   viewportStartMs: number;
   viewportEndMs: number;
+  beatGrid?: BeatLine[];
 }
 
 const DRAG_THRESHOLD_PX = 4;
 const ZOOM_FACTOR = 1.25;
+const BEAT_FONT = '9px "Inter", -apple-system, "Segoe UI", system-ui, sans-serif';
 
 function drawBars(c: CanvasCtx) {
   const h = c.height * c.dpr;
@@ -63,9 +68,51 @@ function drawPlayhead(c: CanvasCtx) {
   c.ctx.fillRect(playheadX - 1 * c.dpr, 0, 2 * c.dpr, h);
 }
 
+function drawBeatGrid(c: CanvasCtx) {
+  const grid = c.beatGrid;
+  if (!grid || grid.length === 0) return;
+
+  const h = c.height * c.dpr;
+  const span = c.viewportEndMs - c.viewportStartMs;
+  if (span <= 0) return;
+
+  const dpr = c.dpr;
+  const labelColor = "oklch(0.35 0.04 155)";
+  const beatColor = "oklch(0.25 0.015 160)";
+  const downbeatColor = "oklch(0.35 0.02 160)";
+
+  c.ctx.save();
+  c.ctx.font = BEAT_FONT;
+  c.ctx.textBaseline = "bottom";
+  c.ctx.textAlign = "center";
+
+  for (const beat of grid) {
+    const ratio = (beat.ms - c.viewportStartMs) / span;
+    const x = ratio * c.width;
+
+    if (beat.isDownbeat) {
+      c.ctx.fillStyle = downbeatColor;
+      c.ctx.fillRect(x, 0, 1 * dpr, h);
+
+      c.ctx.fillStyle = labelColor;
+      c.ctx.fillText(
+        `${beat.barNumber}`,
+        x,
+        h - 2 * dpr,
+      );
+    } else {
+      c.ctx.fillStyle = beatColor;
+      c.ctx.fillRect(x, 0, 0.5 * dpr, h);
+    }
+  }
+
+  c.ctx.restore();
+}
+
 function renderFrame(c: CanvasCtx) {
   c.ctx.clearRect(0, 0, c.width, c.height);
   if (c.peaks.length === 0) return;
+  drawBeatGrid(c);
   drawBars(c);
   drawPlayhead(c);
 }
@@ -79,12 +126,16 @@ export function WaveformView({
   onSeek,
   onZoom,
   onPan,
+  beatGrid,
+  children,
   height = 200,
 }: WaveformViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const peaksRef = useRef(peaks);
   peaksRef.current = peaks;
+  const beatGridRef = useRef(beatGrid);
+  beatGridRef.current = beatGrid;
 
   const dragStateRef = useRef<{
     startX: number;
@@ -114,6 +165,7 @@ export function WaveformView({
         positionMs: posMs,
         viewportStartMs,
         viewportEndMs,
+        beatGrid: beatGridRef.current,
       });
     },
     [height, viewportStartMs, viewportEndMs],
@@ -143,7 +195,7 @@ export function WaveformView({
 
   useEffect(() => {
     draw(currentPositionMs);
-  }, [currentPositionMs, peaks, draw]);
+  }, [currentPositionMs, peaks, beatGrid, draw]);
 
   const pixelToMs = useCallback((clientX: number): number => {
     const canvas = canvasRef.current;
@@ -163,14 +215,17 @@ export function WaveformView({
       const zoomFn = onZoomRef.current;
       if (!zoomFn) return;
       e.preventDefault();
-      const centerMs = pixelToMs(e.clientX);
+      const rect = canvas.getBoundingClientRect();
+      const vp = viewportRef.current;
+      const ratio = (e.clientX - rect.left) / rect.width;
+      const centerMs = vp.start + ratio * (vp.end - vp.start);
       const factor = e.deltaY < 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
       zoomFn(factor, centerMs);
     };
 
     canvas.addEventListener("wheel", wheelHandler, { passive: false });
     return () => canvas.removeEventListener("wheel", wheelHandler);
-  }, [pixelToMs]);
+  }, []);
 
   function handleMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
     dragStateRef.current = {
@@ -192,7 +247,8 @@ export function WaveformView({
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
-      const span = viewportEndMs - viewportStartMs;
+      const vp = viewportRef.current;
+      const span = vp.end - vp.start;
       const panDeltaMs = -((e.clientX - state.lastX) / rect.width) * span;
       onPan(panDeltaMs);
       state.lastX = e.clientX;
@@ -225,6 +281,7 @@ export function WaveformView({
         onMouseLeave={handleMouseLeave}
         className="w-full block h-full"
       />
+      {children}
     </div>
   );
 }

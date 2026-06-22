@@ -102,6 +102,12 @@ impl FullBufferPlayback {
     }
 
     pub fn set_tempo(&self, tempo: f64) {
+        let old_tempo = f64::from_bits(self.tempo.load(Ordering::Relaxed));
+        if old_tempo > 0.0 && tempo > 0.0 && (tempo - old_tempo).abs() > f64::EPSILON {
+            let current_output = self.output_position.load(Ordering::Relaxed) as f64;
+            let rescaled = (current_output * old_tempo / tempo) as u64;
+            self.output_position.store(rescaled, Ordering::Relaxed);
+        }
         self.tempo.store(tempo.to_bits(), Ordering::Relaxed);
         if let Ok(mut st) = self.soundtouch.lock() {
             st.set_tempo(tempo);

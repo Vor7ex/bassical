@@ -234,9 +234,10 @@ export const useCalibrationStore = create<CalibrationState>((set, get) => ({
     const currentSpan = viewportEndMs - viewportStartMs;
     if (currentSpan <= 0) return;
     const center = centerMs ?? (viewportStartMs + viewportEndMs) / 2;
+    const cursorRatio = (center - viewportStartMs) / currentSpan;
     const newSpan = Math.max(50, currentSpan / factor);
-    let start = center - newSpan / 2;
-    let end = center + newSpan / 2;
+    let start = center - cursorRatio * newSpan;
+    let end = center + (1 - cursorRatio) * newSpan;
     const clamped = clampViewport(start, end, durationMs);
     set({ viewportStartMs: clamped.startMs, viewportEndMs: clamped.endMs });
   },
