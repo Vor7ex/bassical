@@ -12,6 +12,7 @@ pub struct FullBufferPlayback {
     total_frames: usize,
     soundtouch: std::sync::Mutex<SoundTouch>,
     read_position: AtomicU64,
+    output_position: AtomicU64,
     is_playing: AtomicBool,
     is_done: AtomicBool,
     flushed: AtomicBool,
@@ -57,6 +58,7 @@ impl FullBufferPlayback {
             total_frames,
             soundtouch: std::sync::Mutex::new(st),
             read_position: AtomicU64::new(initial_read as u64),
+            output_position: AtomicU64::new(0),
             is_playing: AtomicBool::new(false),
             is_done: AtomicBool::new(false),
             flushed: AtomicBool::new(false),
@@ -84,6 +86,14 @@ impl FullBufferPlayback {
         self.read_position.store(clamped, Ordering::Relaxed);
         self.is_done.store(false, Ordering::Relaxed);
         self.flushed.store(false, Ordering::Relaxed);
+
+        let tempo = f64::from_bits(self.tempo.load(Ordering::Relaxed));
+        let output_base = if tempo > 0.0 {
+            (clamped as f64 / tempo) as u64
+        } else {
+            0
+        };
+        self.output_position.store(output_base, Ordering::Relaxed);
 
         if let Ok(mut st) = self.soundtouch.lock() {
             st.clear();
@@ -124,14 +134,18 @@ impl FullBufferPlayback {
             }
         }
 
+        self.output_position
+            .fetch_add(offset as u64, Ordering::Relaxed);
         self.mark_done_if_empty(&mut st, offset, frames_needed);
         output
     }
 
     pub fn get_position_ms(&self) -> f64 {
-        let frame = self.read_position.load(Ordering::Relaxed);
+        let tempo = f64::from_bits(self.tempo.load(Ordering::Relaxed));
+        let output_frames = self.output_position.load(Ordering::Relaxed) as f64;
+        let source_frames = output_frames * tempo;
         if self.sample_rate > 0 {
-            let ms = (frame as f64 / self.sample_rate as f64) * 1000.0;
+            let ms = (source_frames / self.sample_rate as f64) * 1000.0;
             ms.min(self.duration_ms)
         } else {
             0.0

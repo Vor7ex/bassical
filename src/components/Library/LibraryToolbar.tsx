@@ -43,7 +43,7 @@ export function LibraryToolbar({ selectedSong, onAddSong, onEditSong, onOpenSong
     let nameWithoutExt = filename.replace(/\.[^.]+$/, "");
     let meta: SongMetadata | undefined;
     try {
-      meta = await extractMetadata(path);
+      meta = await extractMetadata({ filePath: path });
       if (meta.title) nameWithoutExt = meta.title;
     } catch {
       console.error("[handleQuickAdd] extractMetadata failed, using filename");

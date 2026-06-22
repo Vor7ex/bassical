@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import type { Song } from "@/lib/types";
 import { usePracticePlayback } from "@/lib/usePracticePlayback";
+import { useViewportPeaks } from "@/lib/useViewportPeaks";
 import { useCalibrationStore } from "@/lib/store";
 import { WaveformView, PlaybackControls } from "@/components/Audio";
 
@@ -16,15 +17,237 @@ interface AudioState {
   peaks: number[];
 }
 
+const SEEK_STEP_MS = 5000;
+const MAX_ZOOM_FACTOR = 200;
+const LOG_MAX_ZOOM = Math.log10(MAX_ZOOM_FACTOR);
+
+function formatTime(ms: number): string {
+  const totalSec = ms / 1000;
+  const min = Math.floor(totalSec / 60);
+  const sec = Math.floor(totalSec % 60);
+  const tenths = Math.floor((ms % 1000) / 100);
+  return `${min}:${String(sec).padStart(2, "0")}.${tenths}`;
+}
+
+function sliderToSpan(slider: number, durationMs: number): number {
+  const factor = Math.pow(10, (slider / 100) * LOG_MAX_ZOOM);
+  return Math.max(50, durationMs / factor);
+}
+
+function spanToSlider(span: number, durationMs: number): number {
+  if (durationMs <= 0 || span >= durationMs) return 0;
+  const factor = durationMs / span;
+  return Math.min(100, (Math.log10(factor) / LOG_MAX_ZOOM) * 100);
+}
+
+const TEXT_INPUT_TYPES = new Set([
+  "text", "number", "password", "email", "search",
+  "tel", "url", "date", "datetime-local", "time",
+]);
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (tag === "INPUT") {
+    return TEXT_INPUT_TYPES.has((target as HTMLInputElement).type);
+  }
+  return false;
+}
+
+interface PlaybackKeyboardParams {
+  isPlaying: boolean;
+  currentPositionMs: number;
+  durationMs: number;
+  onPlayPause: () => void;
+  onSeek: (ms: number) => void;
+}
+
+function usePlaybackKeyboard(params: PlaybackKeyboardParams) {
+  const stateRef = useRef(params);
+  stateRef.current = params;
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target)) return;
+      const s = stateRef.current;
+      switch (e.code) {
+        case "Space":
+          e.preventDefault();
+          s.onPlayPause();
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          s.onSeek(Math.max(0, s.currentPositionMs - SEEK_STEP_MS));
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          s.onSeek(Math.min(s.durationMs, s.currentPositionMs + SEEK_STEP_MS));
+          break;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+}
+
+interface ZoomToolbarProps {
+  viewportStartMs: number;
+  viewportEndMs: number;
+  durationMs: number;
+  onSliderChange: (span: number) => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onFit: () => void;
+}
+
+function ZoomToolbar({
+  viewportStartMs,
+  viewportEndMs,
+  durationMs,
+  onSliderChange,
+  onZoomIn,
+  onZoomOut,
+  onFit,
+}: ZoomToolbarProps) {
+  const span = viewportEndMs - viewportStartMs;
+  const sliderValue = spanToSlider(span, durationMs);
+  const zoomLevel = span > 0 ? Math.round((durationMs / span) * 100) : 100;
+
+  const handleSlider = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newSpan = sliderToSpan(parseFloat(e.target.value), durationMs);
+      onSliderChange(newSpan);
+    },
+    [durationMs, onSliderChange],
+  );
+
+  return (
+    <div className="bg-bg-surface border-t border-border-subtle h-8 flex items-center justify-between px-3 shrink-0">
+      <span className="text-mono text-caption text-text-tertiary">
+        {formatTime(viewportStartMs)} – {formatTime(viewportEndMs)}
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onZoomOut}
+          className="text-text-tertiary hover:text-text-primary w-5 h-5 flex items-center justify-center text-body cursor-pointer transition-colors"
+          aria-label="Alejar zoom"
+        >
+          −
+        </button>
+        <input
+          type="range"
+          className="zoom-slider w-32"
+          min={0}
+          max={100}
+          step={0.5}
+          value={sliderValue}
+          onChange={handleSlider}
+          aria-label="Nivel de zoom"
+        />
+        <button
+          onClick={onZoomIn}
+          className="text-text-tertiary hover:text-text-primary w-5 h-5 flex items-center justify-center text-body cursor-pointer transition-colors"
+          aria-label="Acercar zoom"
+        >
+          +
+        </button>
+        <span className="text-mono text-caption text-text-secondary min-w-[48px] text-center">
+          {zoomLevel >= 10000
+            ? `${Math.round(zoomLevel / 1000)}K%`
+            : `${zoomLevel}%`}
+        </span>
+        <div className="w-px h-4 bg-border-subtle mx-1" />
+        <button
+          onClick={onFit}
+          className="text-caption text-text-tertiary hover:text-text-primary px-1.5 cursor-pointer transition-colors"
+          aria-label="Ajustar a pantalla"
+        >
+          Fit
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface WaveformAreaProps {
+  audioPath: string;
+  audioState: AudioState;
+  currentPositionMs: number;
+  fullBufferReady: boolean;
+  onSeek: (positionMs: number) => void;
+}
+
+function WaveformArea({
+  audioPath,
+  audioState,
+  currentPositionMs,
+  fullBufferReady,
+  onSeek,
+}: WaveformAreaProps) {
+  const viewportStartMs = useCalibrationStore((s) => s.viewportStartMs);
+  const viewportEndMs = useCalibrationStore((s) => s.viewportEndMs);
+  const zoomBy = useCalibrationStore((s) => s.zoomBy);
+  const panBy = useCalibrationStore((s) => s.panBy);
+  const zoomToFit = useCalibrationStore((s) => s.zoomToFit);
+  const setViewport = useCalibrationStore((s) => s.setViewport);
+
+  const peaks = useViewportPeaks({
+    audioPath,
+    overviewPeaks: audioState.peaks,
+    viewportStartMs,
+    viewportEndMs,
+    durationMs: audioState.durationMs,
+    fullBufferReady,
+  });
+
+  const handleSliderChange = useCallback(
+    (newSpan: number) => {
+      const center = (viewportStartMs + viewportEndMs) / 2;
+      setViewport(center - newSpan / 2, center + newSpan / 2);
+    },
+    [viewportStartMs, viewportEndMs, setViewport],
+  );
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0 rounded-sm overflow-hidden border border-border-subtle">
+      <WaveformView
+        peaks={peaks}
+        currentPositionMs={currentPositionMs}
+        viewportStartMs={viewportStartMs}
+        viewportEndMs={viewportEndMs}
+        durationMs={audioState.durationMs}
+        onSeek={onSeek}
+        onZoom={zoomBy}
+        onPan={panBy}
+      />
+      <ZoomToolbar
+        viewportStartMs={viewportStartMs}
+        viewportEndMs={viewportEndMs}
+        durationMs={audioState.durationMs}
+        onSliderChange={handleSliderChange}
+        onZoomIn={() => zoomBy(1.5)}
+        onZoomOut={() => zoomBy(1 / 1.5)}
+        onFit={zoomToFit}
+      />
+    </div>
+  );
+}
+
 interface AudioMainContentProps {
+  audioPath: string;
   audioState: AudioState | null;
   currentPositionMs: number;
+  fullBufferReady: boolean;
   onSeek: (positionMs: number) => void;
 }
 
 function AudioMainContent({
+  audioPath,
   audioState,
   currentPositionMs,
+  fullBufferReady,
   onSeek,
 }: AudioMainContentProps) {
   if (!audioState) {
@@ -44,10 +267,11 @@ function AudioMainContent({
     );
   }
   return (
-    <WaveformView
-      peaks={audioState.peaks}
+    <WaveformArea
+      audioPath={audioPath}
+      audioState={audioState}
       currentPositionMs={currentPositionMs}
-      durationMs={audioState.durationMs}
+      fullBufferReady={fullBufferReady}
       onSeek={onSeek}
     />
   );
@@ -95,6 +319,53 @@ function StatusBar({
   );
 }
 
+function useCalibrationLifecycle(song: Song, audioState: AudioState | null) {
+  const loadForSong = useCalibrationStore((s) => s.loadForSong);
+  const persistNow = useCalibrationStore((s) => s.persistNow);
+  const resetCalibration = useCalibrationStore((s) => s.reset);
+  const loadedSongId = useCalibrationStore((s) => s.songId);
+
+  const durationReady = !!audioState && audioState.durationMs > 0;
+  const shouldLoad = durationReady && loadedSongId !== song.id;
+
+  useEffect(() => {
+    if (shouldLoad && audioState) {
+      void loadForSong(song, audioState.durationMs);
+    }
+  }, [shouldLoad, audioState, song, loadForSong]);
+
+  useEffect(() => {
+    return () => {
+      void persistNow().finally(() => resetCalibration());
+    };
+  }, [persistNow, resetCalibration]);
+}
+
+function useAutoScrollViewport(
+  isPlaying: boolean,
+  currentPositionMs: number,
+  hasAudio: boolean,
+) {
+  const setViewport = useCalibrationStore((s) => s.setViewport);
+  const viewportStartMs = useCalibrationStore((s) => s.viewportStartMs);
+  const viewportEndMs = useCalibrationStore((s) => s.viewportEndMs);
+
+  const viewportRef = useRef({ start: 0, end: 0 });
+  viewportRef.current = { start: viewportStartMs, end: viewportEndMs };
+
+  useEffect(() => {
+    if (!isPlaying || !hasAudio) return;
+    const { start, end } = viewportRef.current;
+    const span = end - start;
+    if (span <= 0) return;
+    if (currentPositionMs > end) {
+      setViewport(currentPositionMs - span * 0.1, currentPositionMs + span * 0.9);
+    } else if (currentPositionMs < start) {
+      setViewport(currentPositionMs - span * 0.9, currentPositionMs + span * 0.1);
+    }
+  }, [currentPositionMs, isPlaying, hasAudio, setViewport]);
+}
+
 export function AudioView({ song, onBack }: AudioViewProps) {
   const {
     isPlaying,
@@ -108,26 +379,17 @@ export function AudioView({ song, onBack }: AudioViewProps) {
     handleSpeedChange,
   } = usePracticePlayback(song.audioPath);
 
-  const loadForSong = useCalibrationStore((s) => s.loadForSong);
-  const persistNow = useCalibrationStore((s) => s.persistNow);
-  const resetCalibration = useCalibrationStore((s) => s.reset);
   const timingPoints = useCalibrationStore((s) => s.timingPoints);
-  const loadedSongId = useCalibrationStore((s) => s.songId);
 
-  const durationReady = !!audioState && audioState.durationMs > 0;
-  const shouldLoadCalibration = durationReady && loadedSongId !== song.id;
-
-  useEffect(() => {
-    if (shouldLoadCalibration && audioState) {
-      void loadForSong(song, audioState.durationMs);
-    }
-  }, [shouldLoadCalibration, audioState, song, loadForSong]);
-
-  useEffect(() => {
-    return () => {
-      void persistNow().finally(() => resetCalibration());
-    };
-  }, [persistNow, resetCalibration]);
+  useCalibrationLifecycle(song, audioState);
+  useAutoScrollViewport(isPlaying, currentPositionMs, !!audioState);
+  usePlaybackKeyboard({
+    isPlaying,
+    currentPositionMs,
+    durationMs: audioState?.durationMs ?? 0,
+    onPlayPause: handlePlayPause,
+    onSeek: handleSeek,
+  });
 
   return (
     <div className="flex flex-col h-full">
@@ -160,8 +422,10 @@ export function AudioView({ song, onBack }: AudioViewProps) {
 
       <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
         <AudioMainContent
+          audioPath={song.audioPath}
           audioState={audioState}
           currentPositionMs={currentPositionMs}
+          fullBufferReady={fullBufferReady}
           onSeek={handleSeek}
         />
       </div>

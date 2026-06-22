@@ -37,6 +37,8 @@ export function usePracticePlayback(audioPath: string) {
   const lastPeakUpdateRef = useRef(0);
   const loadedPathRef = useRef("");
   const decodeFinalizedRef = useRef(false);
+  const positionRef = useRef(0);
+  positionRef.current = currentPositionMs;
 
   useEffect(() => {
     lastPeakUpdateRef.current = 0;
@@ -54,7 +56,7 @@ export function usePracticePlayback(audioPath: string) {
       loadedPathRef.current = audioPath;
     }
 
-    decodeAudio(audioPath)
+    decodeAudio({ path: audioPath })
       .then((info) => {
         setAudioState(info);
         if (info.complete) {
@@ -153,7 +155,7 @@ export function usePracticePlayback(audioPath: string) {
         await pauseAudio();
         setIsPlaying(false);
       } else {
-        const info = await startPlayback(audioPath, currentPositionMs);
+        const info = await startPlayback({ path: audioPath, positionMs: positionRef.current });
         setAudioState((prev) =>
           prev
             ? {

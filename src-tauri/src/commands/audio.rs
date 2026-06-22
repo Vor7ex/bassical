@@ -236,3 +236,156 @@ pub fn is_full_buffer_ready(engine_state: State<AudioEngineState>) -> Result<boo
     let engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
     Ok(engine.is_full_buffer_ready())
 }
+
+/// Computa peaks (amplitud máxima) para un rango temporal del audio cacheado.
+/// Usado para zoom milimétrico del waveform: cuando el viewport se estrecha,
+/// los 2000 bins del overview no tienen suficiente resolución, así que se
+/// recalculan peaks desde los samples completos para el rango visible.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RangeQuery {
+    pub start_ms: f64,
+    pub end_ms: f64,
+    pub num_bins: u32,
+}
+
+#[tauri::command]
+pub fn get_peaks_in_range(
+    path: String,
+    range: RangeQuery,
+    cache_state: State<AudioCacheState>,
+) -> Result<Vec<f32>, String> {
+    if range.num_bins == 0 {
+        return Ok(vec![]);
+    }
+    let cache = cache_state.inner().0.clone();
+    let cached = cache
+        .get(&path)
+        .ok_or_else(|| "Audio no decodificado aún".to_string())?;
+
+    compute_peaks_in_range(&cached.samples, cached.sample_rate, cached.channels, &range)
+}
+
+/// Computa peaks por rango desde un buffer de samples intercalados.
+/// Extraída como función pura para testear sin depender del cache.
+fn compute_peaks_in_range(
+    samples: &[f32],
+    sample_rate: u32,
+    channels: u16,
+    query: &RangeQuery,
+) -> Result<Vec<f32>, String> {
+    if query.num_bins == 0 {
+        return Ok(vec![]);
+    }
+    let ch = channels as usize;
+    if ch == 0 || sample_rate == 0 {
+        return Err("Sample rate o canales inválidos".to_string());
+    }
+    let sr = sample_rate as f64;
+    let total_samples = samples.len();
+
+    let start_frame = (((query.start_ms / 1000.0) * sr).round() as usize).saturating_mul(ch);
+    let end_frame = (((query.end_ms / 1000.0) * sr).round() as usize).saturating_mul(ch);
+
+    let start = start_frame.min(total_samples);
+    let end = end_frame.min(total_samples);
+
+    if start >= end {
+        return Ok(vec![]);
+    }
+
+    let range = end - start;
+    let num_bins_us = query.num_bins as usize;
+    let bin_size = (range / num_bins_us).max(1);
+
+    let mut peaks = Vec::with_capacity(num_bins_us);
+    for i in 0..num_bins_us {
+        let bin_start = start + i * bin_size;
+        let bin_end = (bin_start + bin_size).min(end);
+        if bin_start >= bin_end {
+            peaks.push(0.0);
+            continue;
+        }
+        let max = samples[bin_start..bin_end]
+            .iter()
+            .map(|s| s.abs())
+            .fold(0.0f32, f32::max);
+        peaks.push(max);
+    }
+    Ok(peaks)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn range(start_ms: f64, end_ms: f64, num_bins: u32) -> RangeQuery {
+        RangeQuery {
+            start_ms,
+            end_ms,
+            num_bins,
+        }
+    }
+
+    fn make_test_samples(num_frames: usize, channels: usize) -> Vec<f32> {
+        (0..num_frames)
+            .flat_map(|f| {
+                let val = (f as f32 / 10.0).sin();
+                (0..channels).map(move |_| val).collect::<Vec<f32>>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_compute_peaks_basic() {
+        let samples: Vec<f32> = (0..100).map(|i| (i as f32 / 10.0).sin()).collect();
+        let peaks = compute_peaks_in_range(&samples, 1000, 1, &range(0.0, 100.0, 10)).unwrap();
+        assert_eq!(peaks.len(), 10);
+        assert!(peaks.iter().all(|&p| p >= 0.0 && p <= 1.0));
+    }
+
+    #[test]
+    fn test_compute_peaks_empty_range() {
+        let samples = vec![0.5, 0.3, 0.8, 0.1];
+        let peaks = compute_peaks_in_range(&samples, 1000, 1, &range(0.0, 0.0, 10)).unwrap();
+        assert!(peaks.is_empty());
+    }
+
+    #[test]
+    fn test_compute_peaks_zero_bins() {
+        let samples = vec![0.5, 0.3];
+        let peaks = compute_peaks_in_range(&samples, 1000, 1, &range(0.0, 1.0, 0)).unwrap();
+        assert!(peaks.is_empty());
+    }
+
+    #[test]
+    fn test_compute_peaks_clamps_to_samples_len() {
+        let samples: Vec<f32> = (0..10).map(|i| (i as f32).abs()).collect();
+        let peaks = compute_peaks_in_range(&samples, 1000, 1, &range(0.0, 1000.0, 5)).unwrap();
+        assert_eq!(peaks.len(), 5);
+    }
+
+    #[test]
+    fn test_compute_peaks_stereo() {
+        let samples = make_test_samples(100, 2);
+        let peaks = compute_peaks_in_range(&samples, 1000, 2, &range(0.0, 100.0, 10)).unwrap();
+        assert_eq!(peaks.len(), 10);
+    }
+
+    #[test]
+    fn test_compute_peaks_finds_max_amplitude() {
+        let mut samples: Vec<f32> = vec![0.1; 100];
+        samples[50] = 0.95;
+        let peaks = compute_peaks_in_range(&samples, 1000, 1, &range(0.0, 100.0, 2)).unwrap();
+        assert_eq!(peaks.len(), 2);
+        assert!((peaks[0] - 0.1).abs() < 0.001);
+        assert!((peaks[1] - 0.95).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_compute_peaks_invalid_sample_rate() {
+        let samples = vec![0.5];
+        let result = compute_peaks_in_range(&samples, 0, 1, &range(0.0, 1.0, 10));
+        assert!(result.is_err());
+    }
+}

@@ -45,7 +45,7 @@ export function useAudioPlayback(audioPath: string) {
       loadedPathRef.current = audioPath;
     }
 
-    loadAudio(audioPath, useSessionStore.getState().isPlaying)
+    loadAudio({ path: audioPath, autoplay: useSessionStore.getState().isPlaying })
       .then((info) => {
         setAudioState(info);
         startDecodePolling();

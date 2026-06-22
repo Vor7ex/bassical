@@ -48,15 +48,37 @@ function clampViewport(
   endMs: number,
   durationMs: number,
 ): { startMs: number; endMs: number } {
-  const minSpan = Math.min(50, durationMs > 0 ? durationMs : 50);
-  let start = Math.max(0, startMs);
-  let end = Math.min(durationMs, endMs);
-  if (durationMs > 0 && end - start < minSpan) {
-    end = Math.min(durationMs, start + minSpan);
-    if (end - start < minSpan) {
-      start = Math.max(0, end - minSpan);
+  if (durationMs <= 0) {
+    return { startMs: 0, endMs: 0 };
+  }
+  const requestedSpan = endMs - startMs;
+  const minSpan = Math.min(50, durationMs);
+
+  let start = startMs;
+  let end = endMs;
+
+  if (start < 0) {
+    start = 0;
+    end = Math.min(start + requestedSpan, durationMs);
+  }
+  if (end > durationMs) {
+    end = durationMs;
+    start = Math.max(end - requestedSpan, 0);
+  }
+  if (start < 0) {
+    start = 0;
+    end = durationMs;
+  }
+  if (end - start < minSpan) {
+    if (durationMs <= minSpan) {
+      start = 0;
+      end = durationMs;
+    } else {
+      end = Math.min(start + minSpan, durationMs);
+      start = Math.max(end - minSpan, 0);
     }
   }
+
   return { startMs: start, endMs: end };
 }
 
