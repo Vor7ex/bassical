@@ -1,5 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { TimingPoint, TimeSignature } from "@/lib/types";
+import { TapCalibrationPanel } from "./TapCalibrationPanel";
 
 const TIME_SIG_PRESETS: { label: string; value: TimeSignature | null }[] = [
   { label: "4/4", value: null },
@@ -107,6 +108,19 @@ function TimeSignatureSelect({ value, onChange }: TimeSignatureSelectProps) {
   );
 }
 
+interface CalibrationPanelProps {
+  detectedBpm: number | null;
+  tapCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  canCommit: boolean;
+  onTap: () => void;
+  onCommit: () => void;
+  onCancel: () => void;
+  onBeginCalibrating: (index: number) => void;
+  calibratingTpIndex: number | null;
+}
+
 interface TimingPointPanelProps {
   timingPoints: TimingPoint[];
   selectedIndex: number | null;
@@ -116,6 +130,7 @@ interface TimingPointPanelProps {
   onUpdate: (index: number, patch: Partial<TimingPoint>) => void;
   onRemove: (index: number) => void;
   onSelect: (index: number | null) => void;
+  calibrationProps: CalibrationPanelProps;
 }
 
 export function TimingPointPanel({
@@ -127,6 +142,7 @@ export function TimingPointPanel({
   onUpdate,
   onRemove,
   onSelect,
+  calibrationProps,
 }: TimingPointPanelProps) {
   const handleAdd = useCallback(() => {
     onAdd(Math.max(0, Math.min(durationMs, defaultOffsetMs)));
@@ -161,10 +177,13 @@ export function TimingPointPanel({
               tp={tp}
               index={idx}
               isSelected={selectedIndex === idx}
+              isCalibrating={calibrationProps.calibratingTpIndex === idx}
               durationMs={durationMs}
               onSelect={() => onSelect(idx)}
               onUpdate={(patch) => onUpdate(idx, patch)}
               onRemove={() => onRemove(idx)}
+              onBeginCalibrating={() => calibrationProps.onBeginCalibrating(idx)}
+              calibrationProps={calibrationProps}
             />
           ))
         )}
@@ -177,20 +196,26 @@ interface TimingPointItemProps {
   tp: TimingPoint;
   index: number;
   isSelected: boolean;
+  isCalibrating: boolean;
   durationMs: number;
   onSelect: () => void;
   onUpdate: (patch: Partial<TimingPoint>) => void;
   onRemove: () => void;
+  onBeginCalibrating: () => void;
+  calibrationProps: CalibrationPanelProps;
 }
 
 function TimingPointItem({
   tp,
   index,
   isSelected,
+  isCalibrating,
   durationMs,
   onSelect,
   onUpdate,
   onRemove,
+  onBeginCalibrating,
+  calibrationProps,
 }: TimingPointItemProps) {
   const bpmText = String(tp.bpm);
   const offsetText = String(tp.offsetMs);
@@ -210,16 +235,31 @@ function TimingPointItem({
         <span className="text-caption text-text-tertiary font-mono">
           TP #{index + 1}
         </span>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
-          className="text-text-tertiary hover:text-text-danger w-4 h-4 flex items-center justify-center cursor-pointer transition-colors text-caption"
-          aria-label={`Eliminar TP #${index + 1}`}
-        >
-          ×
-        </button>
+        <div className="flex items-center gap-1">
+          {!isCalibrating && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onBeginCalibrating();
+              }}
+              className="text-text-tertiary hover:text-accent w-4 h-4 flex items-center justify-center cursor-pointer transition-colors text-xs leading-none"
+              aria-label={`Calibrar TP #${index + 1}`}
+              title="Calibrar con tap"
+            >
+              &#x25C9;
+            </button>
+          )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove();
+            }}
+            className="text-text-tertiary hover:text-text-danger w-4 h-4 flex items-center justify-center cursor-pointer transition-colors text-xs leading-none"
+            aria-label={`Eliminar TP #${index + 1}`}
+          >
+            ×
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -249,6 +289,19 @@ function TimingPointItem({
           onChange={(ts) => onUpdate({ timeSignature: ts })}
         />
       </div>
+
+      {isCalibrating && (
+        <TapCalibrationPanel
+          detectedBpm={calibrationProps.detectedBpm}
+          tapCount={calibrationProps.tapCount}
+          acceptedCount={calibrationProps.acceptedCount}
+          rejectedCount={calibrationProps.rejectedCount}
+          canCommit={calibrationProps.canCommit}
+          onTap={calibrationProps.onTap}
+          onCommit={calibrationProps.onCommit}
+          onCancel={calibrationProps.onCancel}
+        />
+      )}
     </div>
   );
 }
@@ -265,6 +318,10 @@ function TpField({
   onCommit: (text: string) => void;
 }) {
   const [text, setText] = useState(initialText);
+
+  useEffect(() => {
+    setText(initialText);
+  }, [initialText]);
 
   const handleBlur = useCallback(() => {
     if (isValid) {

@@ -2,6 +2,8 @@ use soundtouch::{Setting, SoundTouch};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
+use crate::calibration::CalibrationState;
+
 const CHUNK_FRAMES: usize = 4096;
 const PREFILL_CHUNKS: usize = 4;
 
@@ -103,23 +105,58 @@ impl FullBufferPlayback {
 
     pub fn set_tempo(&self, tempo: f64) {
         let old_tempo = f64::from_bits(self.tempo.load(Ordering::Relaxed));
-        if old_tempo > 0.0 && tempo > 0.0 && (tempo - old_tempo).abs() > f64::EPSILON {
-            let current_output = self.output_position.load(Ordering::Relaxed) as f64;
-            let rescaled = (current_output * old_tempo / tempo) as u64;
-            self.output_position.store(rescaled, Ordering::Relaxed);
+        if (old_tempo - tempo).abs() < f64::EPSILON {
+            return;
         }
+
+        self.rescale_output_position(old_tempo, tempo);
         self.tempo.store(tempo.to_bits(), Ordering::Relaxed);
+
         if let Ok(mut st) = self.soundtouch.lock() {
-            st.set_tempo(tempo);
+            self.apply_tempo_transition(&mut st, old_tempo, tempo);
         }
     }
 
-    pub fn feed_and_receive(&self, frames_needed: usize) -> Vec<f32> {
+    fn rescale_output_position(&self, old_tempo: f64, new_tempo: f64) {
+        if old_tempo <= 0.0 || new_tempo <= 0.0 {
+            return;
+        }
+        let current_output = self.output_position.load(Ordering::Relaxed) as f64;
+        let rescaled = (current_output * old_tempo / new_tempo) as u64;
+        self.output_position.store(rescaled, Ordering::Relaxed);
+    }
+
+    fn apply_tempo_transition(&self, st: &mut SoundTouch, old_tempo: f64, new_tempo: f64) {
+        let was_bypass = (old_tempo - 1.0).abs() < 1e-6;
+        let is_bypass = (new_tempo - 1.0).abs() < 1e-6;
+
+        if was_bypass && !is_bypass {
+            st.clear();
+            st.set_tempo(new_tempo);
+            let read_pos = self.read_position.load(Ordering::Relaxed) as usize;
+            self.prefill_from(st, read_pos);
+        } else if !was_bypass && is_bypass {
+            st.clear();
+            let new_output = self.output_position.load(Ordering::Relaxed);
+            self.read_position.store(new_output, Ordering::Relaxed);
+        } else {
+            st.set_tempo(new_tempo);
+        }
+    }
+
+    pub fn feed_and_receive(&self, frames_needed: usize, calib: &CalibrationState) -> Vec<f32> {
         let ch = self.channels;
         let mut output = vec![0.0f32; frames_needed * ch];
+
+        if self.is_bypass() {
+            self.feed_direct(&mut output, frames_needed, calib);
+            return output;
+        }
+
         let mut offset = 0usize;
 
         let Ok(mut st) = self.soundtouch.lock() else {
+            calib.set_soundtouch_unprocessed(0);
             return output;
         };
 
@@ -140,10 +177,34 @@ impl FullBufferPlayback {
             }
         }
 
+        calib.set_soundtouch_unprocessed(st.num_unprocessed_samples() as u64);
         self.output_position
             .fetch_add(offset as u64, Ordering::Relaxed);
         self.mark_done_if_empty(&mut st, offset, frames_needed);
         output
+    }
+
+    fn feed_direct(&self, output: &mut [f32], frames_needed: usize, calib: &CalibrationState) {
+        let ch = self.channels;
+        let read_pos = self.read_position.load(Ordering::Relaxed) as usize;
+        let remaining = self.total_frames.saturating_sub(read_pos);
+        let to_copy = frames_needed.min(remaining);
+        let start = read_pos * ch;
+        let sample_count = to_copy * ch;
+        output[..sample_count].copy_from_slice(&self.decoded_samples[start..start + sample_count]);
+        self.read_position
+            .fetch_add(to_copy as u64, Ordering::Relaxed);
+        self.output_position
+            .fetch_add(to_copy as u64, Ordering::Relaxed);
+        calib.set_soundtouch_unprocessed(0);
+        if read_pos + to_copy >= self.total_frames {
+            self.is_done.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn is_bypass(&self) -> bool {
+        let t = f64::from_bits(self.tempo.load(Ordering::Relaxed));
+        (t - 1.0).abs() < 1e-6
     }
 
     pub fn get_position_ms(&self) -> f64 {
@@ -172,6 +233,10 @@ impl FullBufferPlayback {
 
     pub fn channels(&self) -> usize {
         self.channels
+    }
+
+    pub fn tempo_atomic(&self) -> u64 {
+        self.tempo.load(Ordering::Relaxed)
     }
 
     pub fn path(&self) -> &str {

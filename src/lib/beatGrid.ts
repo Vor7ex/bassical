@@ -21,13 +21,13 @@ interface SegmentParams {
   barOffset: number;
 }
 
-function generateBeatsForSegment(params: SegmentParams): { lines: BeatLine[]; beatCount: number } {
+function generateBeatsForSegment(params: SegmentParams): BeatLine[] {
   const { tp, nextOffset, viewportStartMs, viewportEndMs, barOffset } = params;
   const ts = effectiveTimeSignature(tp);
   const beatMs = 60000 / tp.bpm;
 
   if (beatMs <= 0) {
-    return { lines: [], beatCount: 0 };
+    return [];
   }
 
   const lines: BeatLine[] = [];
@@ -39,12 +39,14 @@ function generateBeatsForSegment(params: SegmentParams): { lines: BeatLine[]; be
 
   let segmentBeatIndex = startBeatIndex;
 
-  while (tp.offsetMs + segmentBeatIndex * beatMs < nextOffset
-    && tp.offsetMs + segmentBeatIndex * beatMs <= viewportEndMs) {
-
+  while (
+    tp.offsetMs + segmentBeatIndex * beatMs < nextOffset &&
+    tp.offsetMs + segmentBeatIndex * beatMs <= viewportEndMs
+  ) {
     const ms = tp.offsetMs + segmentBeatIndex * beatMs;
     const beatNumber = (segmentBeatIndex % ts.numerator) + 1;
-    const barNumber = barOffset + 1 + Math.floor(segmentBeatIndex / ts.numerator);
+    const barNumber =
+      barOffset + 1 + Math.floor(segmentBeatIndex / ts.numerator);
 
     lines.push({
       ms,
@@ -56,7 +58,17 @@ function generateBeatsForSegment(params: SegmentParams): { lines: BeatLine[]; be
     segmentBeatIndex++;
   }
 
-  return { lines, beatCount: segmentBeatIndex };
+  return lines;
+}
+
+function barsInSegment(tp: TimingPoint, segmentEndMs: number): number {
+  const ts = effectiveTimeSignature(tp);
+  const beatMs = 60000 / tp.bpm;
+  if (beatMs <= 0) return 0;
+  const segmentDuration = segmentEndMs - tp.offsetMs;
+  if (segmentDuration <= 0) return 0;
+  const beatCount = segmentDuration / beatMs;
+  return Math.ceil(beatCount / ts.numerator);
 }
 
 export function computeBeatGrid(
@@ -76,20 +88,17 @@ export function computeBeatGrid(
     const nextOffset =
       segIdx + 1 < sorted.length ? sorted[segIdx + 1].offsetMs : durationMs;
 
-    const { lines: segmentLines, beatCount } = generateBeatsForSegment({
-      tp,
-      nextOffset,
-      viewportStartMs,
-      viewportEndMs,
-      barOffset,
-    });
+    lines.push(
+      ...generateBeatsForSegment({
+        tp,
+        nextOffset,
+        viewportStartMs,
+        viewportEndMs,
+        barOffset,
+      }),
+    );
 
-    lines.push(...segmentLines);
-
-    if (beatCount > 0) {
-      const ts = effectiveTimeSignature(tp);
-      barOffset += Math.ceil(beatCount / ts.numerator);
-    }
+    barOffset += barsInSegment(tp, nextOffset);
   }
 
   return lines;

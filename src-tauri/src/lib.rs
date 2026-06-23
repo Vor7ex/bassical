@@ -5,20 +5,24 @@ mod models;
 mod parser;
 mod persistence;
 
+use crate::calibration::CalibrationState;
 use commands::audio::{AudioCacheState, AudioEngineState};
+use commands::calibration::CalibrationTapState;
 use commands::library;
 use std::sync::{Arc, Mutex};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let calib = Arc::new(CalibrationState::new());
     let cache = Arc::new(audio::cache::AudioCache::new());
-    let engine = audio::engine::AudioEngine::new(cache.clone());
+    let engine = audio::engine::AudioEngine::new(cache.clone(), calib.clone());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AudioEngineState(Mutex::new(engine)))
         .manage(AudioCacheState::new(cache))
+        .manage(CalibrationTapState(calib))
         .invoke_handler(tauri::generate_handler![
             library::init_app,
             library::get_library,
@@ -47,6 +51,7 @@ pub fn run() {
             commands::calibration::get_calibration,
             commands::calibration::save_timing_points,
             commands::calibration::clear_calibration,
+            commands::calibration::record_calibration_tap,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

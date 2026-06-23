@@ -10,6 +10,7 @@ use std::time::Duration;
 use super::buffer_playback::FullBufferPlayback;
 use super::cache::{ActiveDecode, AudioCache, CachedAudio};
 use super::decoder::{probe_file, AudioMetadata, StreamingDecoder};
+use crate::calibration::CalibrationState;
 
 const PEAK_BINS: usize = 2000;
 const RING_BUFFER_SECONDS: usize = 2;
@@ -108,6 +109,7 @@ struct PlaybackState {
     playback: Mutex<Option<Arc<StreamingState>>>,
     full_buffer: Mutex<Option<Arc<FullBufferPlayback>>>,
     current_path: Mutex<String>,
+    calib: Arc<CalibrationState>,
 }
 
 pub struct AudioPlaybackInfo {
@@ -125,13 +127,29 @@ pub struct AudioEngine {
 unsafe impl Send for AudioEngine {}
 
 impl AudioEngine {
-    pub fn new(cache: Arc<AudioCache>) -> Self {
+    pub fn new(cache: Arc<AudioCache>, calib: Arc<CalibrationState>) -> Self {
         let host = cpal::default_host();
-        let device_rate = host
-            .default_output_device()
-            .and_then(|d| d.default_output_config().ok())
-            .map(|c| c.sample_rate().0 as f64)
-            .unwrap_or(48000.0);
+        let device = host.default_output_device();
+        let supported_config = device.as_ref().and_then(|d| d.default_output_config().ok());
+
+        let (device_rate, _channels) = supported_config
+            .as_ref()
+            .map(|c| (c.sample_rate().0 as f64, c.channels() as usize))
+            .unwrap_or((48000.0, 2));
+
+        let os_latency_ms = supported_config
+            .as_ref()
+            .map(|c| {
+                let config: cpal::StreamConfig = c.config();
+                match config.buffer_size {
+                    cpal::BufferSize::Fixed(frames) => frames as f64 / device_rate * 1000.0,
+                    cpal::BufferSize::Default => 480.0 / device_rate * 1000.0,
+                }
+            })
+            .unwrap_or(10.0);
+
+        calib.set_device_rate(device_rate);
+        calib.set_os_latency_ms(os_latency_ms);
 
         let state = Arc::new(PlaybackState {
             position: AtomicU64::new(0),
@@ -142,6 +160,7 @@ impl AudioEngine {
             playback: Mutex::new(None),
             full_buffer: Mutex::new(None),
             current_path: Mutex::new(String::new()),
+            calib,
         });
 
         let mut engine = AudioEngine {
@@ -581,11 +600,11 @@ macro_rules! create_streaming_callback {
             }
 
             {
-                let fbp_guard = s.full_buffer.lock().unwrap();
-                if let Some(ref fbp) = *fbp_guard {
+                let fbp_opt = s.full_buffer.lock().unwrap().as_ref().cloned();
+                if let Some(ref fbp) = fbp_opt {
                     let ch = fbp.channels();
                     let frames_needed = data.len() / ch;
-                    let samples = fbp.feed_and_receive(frames_needed);
+                    let samples = fbp.feed_and_receive(frames_needed, &s.calib);
                     for (i, sample) in data.iter_mut().enumerate() {
                         *sample = if i < samples.len() {
                             $convert(samples[i])
@@ -593,6 +612,12 @@ macro_rules! create_streaming_callback {
                             $zero
                         };
                     }
+                    s.calib.set_is_full_buffer(true);
+                    s.calib.set_output_buffer_frames(frames_needed as u64);
+                    s.calib.set_ring_buffer_samples(0);
+                    s.calib.set_position_ms(fbp.get_position_ms());
+                    s.calib.set_speed(f64::from_bits(fbp.tempo_atomic()));
+                    s.calib.set_is_playing(true);
                     if fbp.is_done() {
                         s.is_playing.store(false, Ordering::Relaxed);
                     }
@@ -646,6 +671,17 @@ macro_rules! create_streaming_callback {
             let new_src_frames = src_frames + frames_out * src_step * speed;
             s.position
                 .store((new_src_frames * ch) as u64, Ordering::Relaxed);
+
+            let ring_samples = 0u64;
+
+            let pos_ms = new_src_frames / rate * 1000.0;
+            s.calib.set_is_full_buffer(false);
+            s.calib.set_soundtouch_unprocessed(0);
+            s.calib.set_output_buffer_frames(frames_out as u64);
+            s.calib.set_ring_buffer_samples(ring_samples);
+            s.calib.set_position_ms(pos_ms);
+            s.calib.set_speed(speed);
+            s.calib.set_is_playing(true);
         }
     }};
 }
@@ -664,7 +700,9 @@ fn create_i16_callback(
 
 impl Default for AudioEngine {
     fn default() -> Self {
-        Self::new(Arc::new(AudioCache::new()))
+        let cache = Arc::new(AudioCache::new());
+        let calib = Arc::new(CalibrationState::new());
+        Self::new(cache, calib)
     }
 }
 

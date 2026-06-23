@@ -1,11 +1,23 @@
+use crate::calibration::CalibrationState;
 use crate::commands::library::{find_song_by_id, find_song_by_id_mut, load_library, save_library};
 use crate::models::song::SongId;
 use crate::models::tab::{BassicalTab, CalibrationMeta, TimingPoint};
 use crate::persistence::storage;
+use std::sync::Arc;
+use tauri::State;
 
 const BPM_MIN: f64 = 20.0;
 const BPM_MAX: f64 = 400.0;
 const OFFSET_MIN: f64 = 0.0;
+
+pub struct CalibrationTapState(pub Arc<CalibrationState>);
+
+/// Devuelve la posición audible calibrada (ms) del reloj de audio, leyendo
+/// solo variables atómicas — sin bloquear `Mutex<AudioEngine>` (ADR-004).
+#[tauri::command]
+pub fn record_calibration_tap(state: State<CalibrationTapState>) -> Result<f64, String> {
+    Ok(state.0.audible_position_ms())
+}
 
 /// Devuelve los timing points de una canción. Si no hay archivo (sin
 /// calibrar) devuelve un vector vacío, no un error.

@@ -9,7 +9,7 @@ interface CalibrationState {
   durationMs: number;
   timingPoints: TimingPoint[];
   selectedTpIndex: number | null;
-  isCalibrating: boolean;
+  calibratingTpIndex: number | null;
   tapPositions: number[];
   detectedBpm: number | null;
 
@@ -27,7 +27,8 @@ interface CalibrationState {
   clearAll: () => void;
   selectTimingPoint: (index: number | null) => void;
 
-  setIsCalibrating: (calibrating: boolean) => void;
+  startCalibrating: (index: number) => void;
+  stopCalibrating: () => void;
   pushTap: (positionMs: number) => void;
   resetTaps: () => void;
   setDetectedBpm: (bpm: number | null) => void;
@@ -116,7 +117,7 @@ export const useCalibrationStore = create<CalibrationState>((set, get) => ({
   durationMs: 0,
   timingPoints: [],
   selectedTpIndex: null,
-  isCalibrating: false,
+  calibratingTpIndex: null,
   tapPositions: [],
   detectedBpm: null,
   viewportStartMs: 0,
@@ -133,7 +134,7 @@ export const useCalibrationStore = create<CalibrationState>((set, get) => ({
         durationMs: safeDuration,
         timingPoints: sortTimingPoints(tps),
         selectedTpIndex: null,
-        isCalibrating: false,
+        calibratingTpIndex: null,
         tapPositions: [],
         detectedBpm: null,
         viewportStartMs: 0,
@@ -197,7 +198,7 @@ export const useCalibrationStore = create<CalibrationState>((set, get) => ({
     set({
       timingPoints: [],
       selectedTpIndex: null,
-      isCalibrating: false,
+      calibratingTpIndex: null,
       tapPositions: [],
       detectedBpm: null,
       isDirty: true,
@@ -207,12 +208,12 @@ export const useCalibrationStore = create<CalibrationState>((set, get) => ({
 
   selectTimingPoint: (index) => set({ selectedTpIndex: index }),
 
-  setIsCalibrating: (calibrating) => {
-    if (!calibrating) {
-      set({ isCalibrating: false, tapPositions: [], detectedBpm: null });
-    } else {
-      set({ isCalibrating: true, tapPositions: [], detectedBpm: null });
-    }
+  startCalibrating: (index) => {
+    set({ calibratingTpIndex: index, tapPositions: [], detectedBpm: null });
+  },
+
+  stopCalibrating: () => {
+    set({ calibratingTpIndex: null, tapPositions: [], detectedBpm: null });
   },
 
   pushTap: (positionMs) => {
@@ -281,7 +282,7 @@ export const useCalibrationStore = create<CalibrationState>((set, get) => ({
       durationMs: 0,
       timingPoints: [],
       selectedTpIndex: null,
-      isCalibrating: false,
+      calibratingTpIndex: null,
       tapPositions: [],
       detectedBpm: null,
       viewportStartMs: 0,

@@ -18,13 +18,16 @@ export function TimingPointMarker({
   onSelect,
 }: TimingPointMarkerProps) {
   const span = viewportEndMs - viewportStartMs;
-  const ratio = span > 0 ? (tp.offsetMs - viewportStartMs) / span : 0;
   const visible =
     span > 0 && tp.offsetMs >= viewportStartMs && tp.offsetMs <= viewportEndMs;
 
   if (!visible) return null;
 
-  const lineColor = isSelected ? "oklch(0.72 0.16 85)" : "oklch(0.65 0.18 25)";
+  const ratio = span > 0 ? (tp.offsetMs - viewportStartMs) / span : 0;
+
+  const lineColor = isSelected
+    ? "oklch(0.72 0.16 85)"
+    : "oklch(0.65 0.18 25)";
   const labelBg = isSelected
     ? "oklch(0.72 0.16 85)"
     : "oklch(0.65 0.18 25 / 0.85)";
@@ -36,7 +39,7 @@ export function TimingPointMarker({
         e.stopPropagation();
         onSelect(index);
       }}
-      className="absolute inset-y-0 z-10 cursor-pointer"
+      className="absolute inset-y-0 z-10 cursor-pointer pointer-events-auto"
       style={{ left: `${ratio * 100}%` }}
     >
       <div

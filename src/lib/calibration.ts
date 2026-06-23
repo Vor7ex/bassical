@@ -15,3 +15,7 @@ export async function saveTimingPoints(
 export async function clearCalibration(songId: string): Promise<void> {
   return await invoke<void>("clear_calibration", { songId });
 }
+
+export async function recordTap(): Promise<number> {
+  return await invoke<number>("record_calibration_tap");
+}

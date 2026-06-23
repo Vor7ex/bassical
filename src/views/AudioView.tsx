@@ -4,6 +4,7 @@ import { usePracticePlayback } from "@/lib/usePracticePlayback";
 import { useViewportPeaks } from "@/lib/useViewportPeaks";
 import { computeBeatGrid } from "@/lib/beatGrid";
 import { useCalibrationStore } from "@/lib/store";
+import { useTapCalibration } from "@/lib/useTapCalibration";
 import { WaveformView, PlaybackControls, TimingPointMarker, TimingPointPanel } from "@/components/Audio";
 
 interface AudioViewProps {
@@ -59,10 +60,12 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 interface PlaybackKeyboardParams {
   isPlaying: boolean;
+  isCalibrating: boolean;
   currentPositionMs: number;
   durationMs: number;
   onPlayPause: () => void;
   onSeek: (ms: number) => void;
+  onTap: () => void;
 }
 
 function usePlaybackKeyboard(params: PlaybackKeyboardParams) {
@@ -74,6 +77,11 @@ function usePlaybackKeyboard(params: PlaybackKeyboardParams) {
       if (isTypingTarget(e.target)) return;
       const s = stateRef.current;
       switch (e.code) {
+        case "KeyT":
+          if (!s.isCalibrating) return;
+          e.preventDefault();
+          s.onTap();
+          break;
         case "Space":
           e.preventDefault();
           s.onPlayPause();
@@ -172,16 +180,31 @@ function ZoomToolbar({
   );
 }
 
+interface CalibrationPanelProps {
+  detectedBpm: number | null;
+  tapCount: number;
+  acceptedCount: number;
+  rejectedCount: number;
+  canCommit: boolean;
+  onTap: () => void;
+  onCommit: () => void;
+  onCancel: () => void;
+  onBeginCalibrating: (index: number) => void;
+  calibratingTpIndex: number | null;
+}
+
 interface WaveformAreaProps {
   audioState: AudioState;
   currentPositionMs: number;
   onSeek: (positionMs: number) => void;
+  calibrationProps: CalibrationPanelProps;
 }
 
 function WaveformArea({
   audioState,
   currentPositionMs,
   onSeek,
+  calibrationProps,
 }: WaveformAreaProps) {
   const viewportStartMs = useCalibrationStore((s) => s.viewportStartMs);
   const viewportEndMs = useCalibrationStore((s) => s.viewportEndMs);
@@ -270,6 +293,7 @@ function WaveformArea({
         onUpdate={updateTimingPoint}
         onRemove={removeTimingPoint}
         onSelect={selectTimingPoint}
+        calibrationProps={calibrationProps}
       />
     </div>
   );
@@ -279,12 +303,14 @@ interface AudioMainContentProps {
   audioState: AudioState | null;
   currentPositionMs: number;
   onSeek: (positionMs: number) => void;
+  calibrationProps: CalibrationPanelProps;
 }
 
 function AudioMainContent({
   audioState,
   currentPositionMs,
   onSeek,
+  calibrationProps,
 }: AudioMainContentProps) {
   if (!audioState) {
     return (
@@ -307,6 +333,7 @@ function AudioMainContent({
       audioState={audioState}
       currentPositionMs={currentPositionMs}
       onSeek={onSeek}
+      calibrationProps={calibrationProps}
     />
   );
 }
@@ -415,14 +442,29 @@ export function AudioView({ song, onBack }: AudioViewProps) {
 
   const timingPoints = useCalibrationStore((s) => s.timingPoints);
 
+  const {
+    calibratingTpIndex,
+    detectedBpm,
+    tapCount,
+    acceptedCount,
+    rejectedCount,
+    canCommit,
+    beginCalibrating,
+    handleFirstTap,
+    commitTapPoint,
+    cancelCalibrating,
+  } = useTapCalibration(handleSeek, handlePlayPause, isPlaying);
+
   useCalibrationLifecycle(song, audioState);
   useAutoScrollViewport(isPlaying, currentPositionMs, !!audioState);
   usePlaybackKeyboard({
     isPlaying,
+    isCalibrating: calibratingTpIndex !== null,
     currentPositionMs,
     durationMs: audioState?.durationMs ?? 0,
     onPlayPause: handlePlayPause,
     onSeek: handleSeek,
+    onTap: handleFirstTap,
   });
 
   return (
@@ -459,6 +501,18 @@ export function AudioView({ song, onBack }: AudioViewProps) {
           audioState={audioState}
           currentPositionMs={currentPositionMs}
           onSeek={handleSeek}
+          calibrationProps={{
+            detectedBpm,
+            tapCount,
+            acceptedCount,
+            rejectedCount,
+            canCommit,
+            onTap: handleFirstTap,
+            onCommit: commitTapPoint,
+            onCancel: cancelCalibrating,
+            onBeginCalibrating: beginCalibrating,
+            calibratingTpIndex,
+          }}
         />
       </div>
 

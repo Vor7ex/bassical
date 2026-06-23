@@ -32,7 +32,7 @@ const ZOOM_FACTOR = 1.25;
 const BEAT_FONT = '9px "Inter", -apple-system, "Segoe UI", system-ui, sans-serif';
 
 function drawBars(c: CanvasCtx) {
-  const h = c.height * c.dpr;
+  const h = c.height;
   const barWidth = 2 * c.dpr;
   const gap = 1 * c.dpr;
   const totalBarWidth = barWidth + gap;
@@ -54,7 +54,7 @@ function drawBars(c: CanvasCtx) {
 }
 
 function drawPlayhead(c: CanvasCtx) {
-  const h = c.height * c.dpr;
+  const h = c.height;
   const span = c.viewportEndMs - c.viewportStartMs;
   if (span <= 0) return;
 
@@ -72,7 +72,7 @@ function drawBeatGrid(c: CanvasCtx) {
   const grid = c.beatGrid;
   if (!grid || grid.length === 0) return;
 
-  const h = c.height * c.dpr;
+  const h = c.height;
   const span = c.viewportEndMs - c.viewportStartMs;
   if (span <= 0) return;
 
@@ -159,7 +159,7 @@ export function WaveformView({
       renderFrame({
         ctx,
         width: canvas.width,
-        height,
+        height: canvas.height,
         dpr,
         peaks: peaksRef.current,
         positionMs: posMs,
@@ -271,17 +271,21 @@ export function WaveformView({
   return (
     <div
       ref={containerRef}
-      className="relative w-full bg-bg-input rounded-sm overflow-hidden cursor-crosshair select-none flex-1 min-h-0"
+      className="relative w-full bg-bg-input cursor-crosshair select-none flex-1 min-h-0"
     >
-      <canvas
-        ref={canvasRef}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseLeave}
-        className="w-full block h-full"
-      />
-      {children}
+      <div className="absolute inset-0 rounded-sm overflow-hidden">
+        <canvas
+          ref={canvasRef}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseLeave}
+          className="w-full block h-full"
+        />
+      </div>
+      <div className="absolute inset-0 pointer-events-none">
+        {children}
+      </div>
     </div>
   );
 }
