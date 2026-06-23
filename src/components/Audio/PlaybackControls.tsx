@@ -4,9 +4,11 @@ interface PlaybackControlsProps {
   durationMs: number;
   playbackSpeed: number;
   speedDisabled?: boolean;
+  metronomeOn: boolean;
   onPlayPause: () => void;
   onSeek: (positionMs: number) => void;
   onSpeedChange: (speed: number) => void;
+  onToggleMetronome: () => void;
 }
 
 function formatTime(ms: number): string {
@@ -22,9 +24,11 @@ export function PlaybackControls({
   durationMs,
   playbackSpeed,
   speedDisabled = false,
+  metronomeOn,
   onPlayPause,
   onSeek,
   onSpeedChange,
+  onToggleMetronome,
 }: PlaybackControlsProps) {
   function handleSpeedDecrease() {
     const newSpeed = Math.max(0.25, playbackSpeed - 0.05);
@@ -88,6 +92,19 @@ export function PlaybackControls({
       <span className="text-mono text-text-secondary bg-bg-input border border-border-subtle px-3 py-1 min-w-[60px] text-center">
         {formatTime(durationMs)}
       </span>
+
+      <button
+        onClick={onToggleMetronome}
+        className={`w-8 h-8 flex items-center justify-center rounded-sm border cursor-pointer transition-all text-body ${
+          metronomeOn
+            ? "bg-accent text-bg-root border-accent"
+            : "bg-bg-input text-text-tertiary border-border-subtle hover:text-text-primary hover:border-border-strong"
+        }`}
+        aria-label={metronomeOn ? "Desactivar metrónomo" : "Activar metrónomo"}
+        title={metronomeOn ? "Metrónomo activo" : "Metrónomo inactivo"}
+      >
+        M
+      </button>
 
       <div className="flex items-center gap-1.5 ml-2">
         <button

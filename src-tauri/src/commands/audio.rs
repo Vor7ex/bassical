@@ -236,3 +236,10 @@ pub fn is_full_buffer_ready(engine_state: State<AudioEngineState>) -> Result<boo
     let engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
     Ok(engine.is_full_buffer_ready())
 }
+
+#[tauri::command]
+pub fn set_song_volume(volume: f64, engine_state: State<AudioEngineState>) -> Result<(), String> {
+    let engine = engine_state.inner().0.lock().map_err(|e| e.to_string())?;
+    engine.set_song_volume(volume);
+    Ok(())
+}

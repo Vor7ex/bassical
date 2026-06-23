@@ -10,6 +10,7 @@ use std::time::Duration;
 use super::buffer_playback::FullBufferPlayback;
 use super::cache::{ActiveDecode, AudioCache, CachedAudio};
 use super::decoder::{probe_file, AudioMetadata, StreamingDecoder};
+use super::metronome::MetronomeState;
 use crate::calibration::CalibrationState;
 
 const PEAK_BINS: usize = 2000;
@@ -104,12 +105,14 @@ struct PlaybackState {
     position: AtomicU64,
     is_playing: AtomicBool,
     speed: AtomicU64,
+    song_volume: AtomicU64,
     device_rate: f64,
     streaming: Mutex<Option<Arc<StreamingState>>>,
     playback: Mutex<Option<Arc<StreamingState>>>,
     full_buffer: Mutex<Option<Arc<FullBufferPlayback>>>,
     current_path: Mutex<String>,
     calib: Arc<CalibrationState>,
+    metronome: Arc<MetronomeState>,
 }
 
 pub struct AudioPlaybackInfo {
@@ -127,7 +130,11 @@ pub struct AudioEngine {
 unsafe impl Send for AudioEngine {}
 
 impl AudioEngine {
-    pub fn new(cache: Arc<AudioCache>, calib: Arc<CalibrationState>) -> Self {
+    pub fn new(
+        cache: Arc<AudioCache>,
+        calib: Arc<CalibrationState>,
+        metronome: Arc<MetronomeState>,
+    ) -> Self {
         let host = cpal::default_host();
         let device = host.default_output_device();
         let supported_config = device.as_ref().and_then(|d| d.default_output_config().ok());
@@ -155,12 +162,14 @@ impl AudioEngine {
             position: AtomicU64::new(0),
             is_playing: AtomicBool::new(false),
             speed: AtomicU64::new(1.0f64.to_bits()),
+            song_volume: AtomicU64::new(1.0f64.to_bits()),
             device_rate,
             streaming: Mutex::new(None),
             playback: Mutex::new(None),
             full_buffer: Mutex::new(None),
             current_path: Mutex::new(String::new()),
             calib,
+            metronome,
         });
 
         let mut engine = AudioEngine {
@@ -352,6 +361,13 @@ impl AudioEngine {
         }
 
         Ok(())
+    }
+
+    pub fn set_song_volume(&self, volume: f64) {
+        let clamped = volume.clamp(0.0, 1.0);
+        self.state
+            .song_volume
+            .store(clamped.to_bits(), Ordering::Relaxed);
     }
 
     pub fn get_position_ms(&self) -> f64 {
@@ -604,7 +620,19 @@ macro_rules! create_streaming_callback {
                 if let Some(ref fbp) = fbp_opt {
                     let ch = fbp.channels();
                     let frames_needed = data.len() / ch;
-                    let samples = fbp.feed_and_receive(frames_needed, &s.calib);
+                    let mut samples = fbp.feed_and_receive(frames_needed, &s.calib);
+
+                    let song_vol = f64::from_bits(s.song_volume.load(Ordering::Relaxed)) as f32;
+                    if (song_vol - 1.0).abs() > f32::EPSILON {
+                        for sample in samples.iter_mut() {
+                            *sample *= song_vol;
+                        }
+                    }
+
+                    let pos_ms = fbp.get_position_ms();
+                    let current_sample = (pos_ms / 1000.0 * s.device_rate).round() as u64;
+                    s.metronome.mix_enabled(&mut samples, ch, current_sample);
+
                     for (i, sample) in data.iter_mut().enumerate() {
                         *sample = if i < samples.len() {
                             $convert(samples[i])
@@ -615,7 +643,7 @@ macro_rules! create_streaming_callback {
                     s.calib.set_is_full_buffer(true);
                     s.calib.set_output_buffer_frames(frames_needed as u64);
                     s.calib.set_ring_buffer_samples(0);
-                    s.calib.set_position_ms(fbp.get_position_ms());
+                    s.calib.set_position_ms(pos_ms);
                     s.calib.set_speed(f64::from_bits(fbp.tempo_atomic()));
                     s.calib.set_is_playing(true);
                     if fbp.is_done() {
@@ -647,21 +675,31 @@ macro_rules! create_streaming_callback {
                 return;
             }
 
-            let mut consumer = streaming.consumer.lock().unwrap();
-
-            for sample in data.iter_mut() {
-                *sample = match consumer.try_pop() {
-                    Some(s) => $convert(s),
-                    None => {
-                        if streaming.is_done.load(Ordering::Acquire) {
-                            s.is_playing.store(false, Ordering::Relaxed);
+            let ch_stream = streaming.channels();
+            let mut samples = vec![0.0f32; data.len()];
+            {
+                let mut consumer = streaming.consumer.lock().unwrap();
+                for sample in samples.iter_mut() {
+                    *sample = match consumer.try_pop() {
+                        Some(s) => s,
+                        None => {
+                            if streaming.is_done.load(Ordering::Acquire) {
+                                s.is_playing.store(false, Ordering::Relaxed);
+                            }
+                            0.0
                         }
-                        $zero
-                    }
-                };
+                    };
+                }
             }
 
-            let ch = streaming.channels() as f64;
+            let song_vol = f64::from_bits(s.song_volume.load(Ordering::Relaxed)) as f32;
+            if (song_vol - 1.0).abs() > f32::EPSILON {
+                for sample in samples.iter_mut() {
+                    *sample *= song_vol;
+                }
+            }
+
+            let ch = ch_stream as f64;
             let rate = streaming.metadata.sample_rate as f64;
             let frames_out = data.len() as f64 / ch;
             let src_step = rate / s.device_rate;
@@ -672,9 +710,16 @@ macro_rules! create_streaming_callback {
             s.position
                 .store((new_src_frames * ch) as u64, Ordering::Relaxed);
 
-            let ring_samples = 0u64;
-
             let pos_ms = new_src_frames / rate * 1000.0;
+            let current_sample = (pos_ms / 1000.0 * s.device_rate).round() as u64;
+            s.metronome
+                .mix_enabled(&mut samples, ch_stream, current_sample);
+
+            for (i, sample) in data.iter_mut().enumerate() {
+                *sample = $convert(samples[i]);
+            }
+
+            let ring_samples = 0u64;
             s.calib.set_is_full_buffer(false);
             s.calib.set_soundtouch_unprocessed(0);
             s.calib.set_output_buffer_frames(frames_out as u64);
@@ -702,7 +747,8 @@ impl Default for AudioEngine {
     fn default() -> Self {
         let cache = Arc::new(AudioCache::new());
         let calib = Arc::new(CalibrationState::new());
-        Self::new(cache, calib)
+        let metronome = Arc::new(MetronomeState::new(48000));
+        Self::new(cache, calib, metronome)
     }
 }
 

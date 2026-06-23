@@ -1,10 +1,12 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import type { Song } from "@/lib/types";
 import { usePracticePlayback } from "@/lib/usePracticePlayback";
 import { useViewportPeaks } from "@/lib/useViewportPeaks";
 import { computeBeatGrid } from "@/lib/beatGrid";
-import { useCalibrationStore } from "@/lib/store";
+import { useCalibrationStore, useMetronomeStore } from "@/lib/store";
 import { useTapCalibration } from "@/lib/useTapCalibration";
+import { setMetronomeGrid } from "@/lib/metronome";
+import { setSongVolume } from "@/lib/audio";
 import { WaveformView, PlaybackControls, TimingPointMarker, TimingPointPanel } from "@/components/Audio";
 
 interface AudioViewProps {
@@ -66,6 +68,7 @@ interface PlaybackKeyboardParams {
   onPlayPause: () => void;
   onSeek: (ms: number) => void;
   onTap: () => void;
+  onToggleMetronome: () => void;
 }
 
 function usePlaybackKeyboard(params: PlaybackKeyboardParams) {
@@ -77,6 +80,10 @@ function usePlaybackKeyboard(params: PlaybackKeyboardParams) {
       if (isTypingTarget(e.target)) return;
       const s = stateRef.current;
       switch (e.code) {
+        case "KeyM":
+          e.preventDefault();
+          s.onToggleMetronome();
+          break;
         case "KeyT":
           if (!s.isCalibrating) return;
           e.preventDefault();
@@ -427,6 +434,23 @@ function useAutoScrollViewport(
   }, [currentPositionMs, isPlaying, hasAudio, setViewport]);
 }
 
+function useMetronomeSync(
+  songId: string | null,
+  timingPoints: { offsetMs: number; bpm: number; timeSignature?: { numerator: number; denominator: number } }[],
+  durationMs: number,
+) {
+  const syncMetronome = useMetronomeStore((s) => s.sync);
+
+  useEffect(() => {
+    if (!songId || durationMs <= 0) return;
+    setMetronomeGrid(timingPoints, durationMs).catch(console.error);
+  }, [songId, timingPoints, durationMs]);
+
+  useEffect(() => {
+    syncMetronome().catch(console.error);
+  }, [syncMetronome]);
+}
+
 export function AudioView({ song, onBack }: AudioViewProps) {
   const {
     isPlaying,
@@ -441,6 +465,16 @@ export function AudioView({ song, onBack }: AudioViewProps) {
   } = usePracticePlayback(song.audioPath);
 
   const timingPoints = useCalibrationStore((s) => s.timingPoints);
+  const songId = useCalibrationStore((s) => s.songId);
+
+  const metronomeOn = useMetronomeStore((s) => s.enabled);
+  const toggleMetronome = useMetronomeStore((s) => s.toggle);
+
+  const [volume, setVolume] = useState(1.0);
+  const handleVolumeChange = useCallback((v: number) => {
+    setVolume(v);
+    setSongVolume(v).catch(console.error);
+  }, []);
 
   const {
     calibratingTpIndex,
@@ -457,6 +491,8 @@ export function AudioView({ song, onBack }: AudioViewProps) {
 
   useCalibrationLifecycle(song, audioState);
   useAutoScrollViewport(isPlaying, currentPositionMs, !!audioState);
+  useMetronomeSync(songId, timingPoints, audioState?.durationMs ?? 0);
+
   usePlaybackKeyboard({
     isPlaying,
     isCalibrating: calibratingTpIndex !== null,
@@ -465,6 +501,7 @@ export function AudioView({ song, onBack }: AudioViewProps) {
     onPlayPause: handlePlayPause,
     onSeek: handleSeek,
     onTap: handleFirstTap,
+    onToggleMetronome: toggleMetronome,
   });
 
   return (
@@ -487,13 +524,29 @@ export function AudioView({ song, onBack }: AudioViewProps) {
             </span>
           )}
         </div>
-        <span className="text-mono text-text-tertiary text-caption">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-caption text-text-tertiary w-4 text-right">
+              {Math.round(volume * 100)}
+            </span>
+            <input
+              type="range"
+              className="volume-slider w-20"
+              min={0}
+              max={100}
+              value={Math.round(volume * 100)}
+              onChange={(e) => handleVolumeChange(parseInt(e.target.value, 10) / 100)}
+              aria-label="Volumen de la canción"
+            />
+          </div>
+          <span className="text-mono text-text-tertiary text-caption">
           {audioState
             ? `${Math.floor(audioState.durationMs / 60000)}:${String(
                 Math.floor((audioState.durationMs % 60000) / 1000),
               ).padStart(2, "0")}`
             : "--:--"}
         </span>
+        </div>
       </div>
 
       <div className="flex-1 flex flex-col overflow-hidden p-4 gap-4">
@@ -522,9 +575,11 @@ export function AudioView({ song, onBack }: AudioViewProps) {
         durationMs={audioState?.durationMs ?? 0}
         playbackSpeed={playbackSpeed}
         speedDisabled={!fullBufferReady}
+        metronomeOn={metronomeOn}
         onPlayPause={handlePlayPause}
         onSeek={handleSeek}
         onSpeedChange={handleSpeedChange}
+        onToggleMetronome={toggleMetronome}
       />
 
       <StatusBar

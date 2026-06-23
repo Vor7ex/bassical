@@ -97,3 +97,7 @@ export async function isFullBufferReady(): Promise<boolean> {
 export async function extractMetadata(params: ExtractMetadataParams): Promise<SongMetadata> {
   return await invoke<SongMetadata>("extract_metadata", { ...params });
 }
+
+export async function setSongVolume(volume: number): Promise<void> {
+  return await invoke<void>("set_song_volume", { volume });
+}
