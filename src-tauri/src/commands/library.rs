@@ -243,6 +243,11 @@ pub fn add_song(
     }
 
     let mut library = load_library()?;
+
+    if library.songs.iter().any(|s| s.audio_path == audio_path) {
+        return Err("Esta canción ya fue agregada".to_string());
+    }
+
     let mut song = Song::new(title, artist, audio_path);
     song.album = album;
     song.genre = genre;
