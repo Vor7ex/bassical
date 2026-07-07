@@ -98,16 +98,16 @@ Plan de desarrollo para Bassical v1.0, una aplicación desktop para práctica de
 **Entregable**: Calibración completa (tap + entrada directa) con visualización, zoom milimétrico, time signature y ajuste manual sobre waveform. Cuadrícula de barras visible. Sin metrónomo audible (Sprint 5).
 
 ### Criterios de Aceptación
-- [ ] RF-02.1: Definir uno o múltiples timing points (offset ms, BPM, time signature opcional)
-- [ ] RF-02.2: Calibración asistida con T, espacio y click; BPM y offset detectados
-- [ ] RF-02.3: Waveform con timing points superpuestos como marcadores arrastrables
-- [ ] RF-02.3: Ajuste de offset por arrastre o input numérico (ms)
-- [ ] RF-02.4: Cuadrícula de beats/barras derivada de timing points (4/4, 3/4, 6/8)
-- [ ] RF-02.5: CRUD individual de timing points (incluida entrada directa sin tap)
-- [ ] RF-02.6: Actualización en tiempo real sobre waveform al editar timing points
-- [ ] Zoom milimétrico del waveform con detalle preservado
-- [ ] RNF-01.1: Latencia de pulsación ≤ 10 ms (compensación dinámica, ADR-004)
-- [ ] Error de alineación ≤ 5 ms con canciones de referencia
+- [X] RF-02.1: Definir uno o múltiples timing points (offset ms, BPM, time signature opcional)
+- [X] RF-02.2: Calibración asistida con T, espacio y click; BPM y offset detectados
+- [X] RF-02.3: Waveform con timing points superpuestos como marcadores
+- [X] RF-02.3: Ajuste de offset por input numérico (ms)
+- [X] RF-02.4: Cuadrícula de beats/barras derivada de timing points (4/4, 3/4, 6/8)
+- [X] RF-02.5: CRUD individual de timing points (incluida entrada directa sin tap)
+- [X] RF-02.6: Actualización en tiempo real sobre waveform al editar timing points
+- [X] Zoom milimétrico del waveform con detalle preservado
+- [X] RNF-01.1: Latencia de pulsación ≤ 10 ms (compensación dinámica, ADR-004)
+- [X] Error de alineación ≤ 5 ms con canciones de referencia
 
 ---
 
