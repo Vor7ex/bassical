@@ -347,6 +347,7 @@ impl MetronomeState {
         channels: usize,
         block_start_sample: u64,
         click_gain: f32,
+        speed: f64,
     ) {
         if !self.enabled.load(Ordering::Relaxed) {
             return;
@@ -359,7 +360,8 @@ impl MetronomeState {
         if block_frames == 0 {
             return;
         }
-        let block_end = block_start_sample + block_frames as u64;
+        let song_frames = block_frames as f64 * speed;
+        let block_end = block_start_sample + song_frames.round() as u64;
 
         let grid = self.grid.load();
         let bank = self.click_bank.load();
@@ -381,8 +383,9 @@ impl MetronomeState {
             if click.is_empty() {
                 continue;
             }
-            let offset_frames = (beat.sample_index - block_start_sample) as usize;
-            let block_offset = offset_frames * channels;
+            let song_offset = (beat.sample_index as f64 - block_start_sample as f64).max(0.0);
+            let device_offset_frames = (song_offset / speed).round() as usize;
+            let block_offset = device_offset_frames * channels;
             if block_offset >= output.len() {
                 continue;
             }
@@ -467,7 +470,7 @@ mod tests {
         let mut s = start;
         for _ in 0..n_blocks {
             let mut buf = vec![0.0f32; block_frames * channels];
-            state.mix_block(&mut buf, channels, s, click_gain);
+            state.mix_block(&mut buf, channels, s, click_gain, 1.0);
             out.extend_from_slice(&buf);
             s += block_frames as u64;
         }
@@ -567,7 +570,7 @@ mod tests {
 
         let block_frames = 512;
         let mut out = vec![0.95f32; block_frames * channels];
-        state.mix_block(&mut out, channels, 0, 1.0);
+        state.mix_block(&mut out, channels, 0, 1.0, 1.0);
 
         let max_abs = out.iter().fold(0.0f32, |a, &v| a.max(v.abs()));
         assert!(max_abs <= 1.0 + 1e-6, "output clipped: max={}", max_abs);
@@ -582,7 +585,7 @@ mod tests {
         set_single_beat(&state, 0, true);
 
         let mut out = vec![0.0f32; 256];
-        state.mix_block(&mut out, channels, 0, 1.0);
+        state.mix_block(&mut out, channels, 0, 1.0, 1.0);
         assert!(out.iter().all(|&v| v == 0.0));
     }
 

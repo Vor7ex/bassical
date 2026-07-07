@@ -444,6 +444,7 @@ impl AudioEngine {
 
     pub fn start_playback(&mut self, path: String) -> Result<AudioPlaybackInfo, String> {
         if let Some(cached) = self.cache.get(&path) {
+            let current_speed = f64::from_bits(self.state.speed.load(Ordering::Relaxed));
             self.clear_full_buffer();
             self.clear_playback();
             *self.state.current_path.lock().unwrap() = path.clone();
@@ -452,12 +453,11 @@ impl AudioEngine {
                 cached.samples.clone(),
                 self.state.device_rate as u32,
                 cached.channels as usize,
-                1.0,
+                current_speed,
             );
             fbp.set_path(path);
             *self.state.full_buffer.lock().unwrap() = Some(Arc::new(fbp));
             self.state.position.store(0, Ordering::Relaxed);
-            self.state.speed.store(1.0f64.to_bits(), Ordering::Relaxed);
             self.state.is_playing.store(true, Ordering::Relaxed);
 
             return Ok(AudioPlaybackInfo {
@@ -640,8 +640,9 @@ macro_rules! create_streaming_callback {
                         }
                     }
 
+                    let speed = f64::from_bits(s.speed.load(Ordering::Relaxed));
                     s.metronome
-                        .mix_block(&mut samples, ch, block_start_sample, click_gain);
+                        .mix_block(&mut samples, ch, block_start_sample, click_gain, speed);
 
                     for (i, sample) in data.iter_mut().enumerate() {
                         *sample = if i < samples.len() {
@@ -729,8 +730,13 @@ macro_rules! create_streaming_callback {
                 }
             }
 
-            s.metronome
-                .mix_block(&mut samples, ch_stream, block_start_sample, click_gain);
+            s.metronome.mix_block(
+                &mut samples,
+                ch_stream,
+                block_start_sample,
+                click_gain,
+                speed,
+            );
 
             for (i, sample) in data.iter_mut().enumerate() {
                 *sample = $convert(samples[i]);
