@@ -7,12 +7,11 @@ import { useState } from "react";
 
 interface LibraryToolbarProps {
   selectedSong: Song | null;
-  onAddSong: () => void;
   onEditSong: () => void;
   onOpenSong: () => void;
 }
 
-export function LibraryToolbar({ selectedSong, onAddSong, onEditSong, onOpenSong }: LibraryToolbarProps) {
+export function LibraryToolbar({ selectedSong, onEditSong, onOpenSong }: LibraryToolbarProps) {
   const searchQuery = useLibraryStore((s) => s.searchQuery);
   const setSearchQuery = useLibraryStore((s) => s.setSearchQuery);
   const removeSongFromStore = useLibraryStore((s) => s.removeSongFromStore);
@@ -43,7 +42,7 @@ export function LibraryToolbar({ selectedSong, onAddSong, onEditSong, onOpenSong
     let nameWithoutExt = filename.replace(/\.[^.]+$/, "");
     let meta: SongMetadata | undefined;
     try {
-      meta = await extractMetadata(path);
+      meta = await extractMetadata({ filePath: path });
       if (meta.title) nameWithoutExt = meta.title;
     } catch {
       console.error("[handleQuickAdd] extractMetadata failed, using filename");
@@ -58,8 +57,8 @@ export function LibraryToolbar({ selectedSong, onAddSong, onEditSong, onOpenSong
         meta?.year ? parseInt(meta.year, 10) : undefined,
       );
       addSongToStore(song);
-    } catch {
-      onAddSong();
+    } catch (e) {
+      window.alert(String(e));
     }
   }
 

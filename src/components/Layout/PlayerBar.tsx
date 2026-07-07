@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useSessionStore, useLibraryStore } from "@/lib/store";
 import { useAudioPlayback } from "@/lib/useAudioPlayback";
+import { setSongVolume } from "@/lib/audio";
 import { ActiveTasksIndicator } from "./ActiveTasksIndicator";
 
 const formatTime = (ms: number) => {
@@ -103,7 +104,9 @@ export function PlayerBar() {
   const currentSongId = useSessionStore((s) => s.currentSongId);
   const playNext = useSessionStore((s) => s.playNext);
   const playPrevious = useSessionStore((s) => s.playPrevious);
-  
+  const volume = useSessionStore((s) => s.volume);
+  const setVolume = useSessionStore((s) => s.setVolume);
+
   const songs = useLibraryStore((s) => s.songs);
   const song = songs.find((s) => s.id === currentSongId) ?? null;
 
@@ -116,6 +119,14 @@ export function PlayerBar() {
   } = useAudioPlayback(song?.audioPath ?? "");
 
   useAutoPlayNext(audioState, currentPositionMs, playNext);
+
+  useEffect(() => {
+    setSongVolume(volume).catch(() => {});
+  }, [volume]);
+
+  const handleVolumeChange = (v: number) => {
+    setVolume(v);
+  };
 
   const duration = audioState?.durationMs ?? 0;
   const progressPercent = duration > 0 ? (currentPositionMs / duration) * 100 : 0;
@@ -157,8 +168,22 @@ export function PlayerBar() {
           />
         </div>
 
-        {/* Right: Tools & Time */}
+        {/* Right: Volume, Time & Tools */}
         <div className="flex items-center justify-end gap-4 w-1/3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-caption text-text-tertiary w-7 text-right">
+              {Math.round(volume * 100)}
+            </span>
+            <input
+              type="range"
+              className="w-16"
+              min={0}
+              max={100}
+              value={Math.round(volume * 100)}
+              onChange={(e) => handleVolumeChange(parseInt(e.target.value, 10) / 100)}
+              aria-label="Volumen"
+            />
+          </div>
           <div className="text-mono text-caption text-text-tertiary tabular-nums">
             {formatTime(currentPositionMs)} / {formatTime(duration)}
           </div>

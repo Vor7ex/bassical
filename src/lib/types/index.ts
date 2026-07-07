@@ -28,6 +28,12 @@ export interface Library {
 export interface TimingPoint {
   offsetMs: number;
   bpm: number;
+  timeSignature?: TimeSignature;
+}
+
+export interface TimeSignature {
+  numerator: number;
+  denominator: number;
 }
 
 export interface AppConfig {
@@ -36,26 +42,28 @@ export interface AppConfig {
   theme: "light" | "dark";
 }
 
-// Esquema del archivo .bassical.json
+// Esquema del archivo songs/<uuid>.bassical.json (ADR-003).
+// `tab` y `practice` son opcionales y se omiten del JSON cuando no existen
+// (Sprint 4 solo usa timingPoints; Sprint 5 rellenará tab/practice).
 export interface BassicalTab {
   schemaVersion: 1;
   id: string;
   title: string;
-  artist: string | null;
+  artist?: string | null;
   audioPath: string;
   timingPoints: TimingPoint[];
-  tab: TabData;
-  practice: PracticeData;
+  tab?: TabData;
+  practice?: PracticeData;
 }
 
 export interface TabData {
-  strings: 4;
-  tuning: ["E", "A", "D", "G"];
+  strings: number;
+  tuning: string[];
   measures: Measure[];
 }
 
 export interface Measure {
-  timeSignature: [number, number];
+  timeSignature: TimeSignature;
   beats: Beat[];
 }
 
@@ -67,7 +75,7 @@ export interface Beat {
 export interface Note {
   string: number;
   fret: number;
-  technique: string | null;
+  technique?: string | null;
 }
 
 export interface PracticeData {

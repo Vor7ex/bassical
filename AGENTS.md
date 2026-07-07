@@ -120,7 +120,7 @@ src-tauri/src/                # Backend
 │   ├── engine.rs             # cpal stream, PlaybackState, dual-mode callback
 │   ├── decoder.rs            # symphonia streaming decoder
 │   └── buffer_playback.rs    # Full-buffer playback with SoundTouch time-stretching
-├── calibration/              # Timing point logic - Sprint 4
+├── calibration/              # Timing point logic - Sprint 4 (in progress)
 ├── parser/                   # Guitar Pro parser - Sprint 6
 ├── lib.rs                    # Tauri builder + command registration
 └── main.rs                   # Entry point
@@ -128,7 +128,7 @@ src-tauri/src/                # Backend
 
 ## Sprint Status
 
-Currently in **Sprint 3** (Audio Engine). Sprint 1 (fundamentals) and Sprint 2 (library CRUD) complete. Audio playback functional with dual-mode architecture: streaming during decode, full-buffer with SoundTouch time-stretching after decode. Calibration, parser modules are stubs.
+Currently in **Sprint 4** (Calibration of Tempo / Timing Points). Sprint 1 (fundamentals), Sprint 2 (library CRUD) and Sprint 3 (audio engine) complete. Audio playback functional with dual-mode architecture: streaming during decode, full-buffer with SoundTouch time-stretching after decode. Calibration module being built (RF-02). Parser module is a stub (Sprint 6). Architectural decisions for Sprint 4 documented in `docs/DECISIONS.md`: time signature per timing point (ADR-001), metronome audible deferred to Sprint 5 (ADR-002), single `.bassical.json` file with optional tab/practice (ADR-003), lock-free tap with dynamic latency compensation in audio-clock domain (ADR-004).
 
 ## Audio Architecture
 

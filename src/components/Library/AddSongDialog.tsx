@@ -29,7 +29,7 @@ export function AddSongDialog({ onClose }: AddSongDialogProps) {
 
     try {
       console.log("[extractMetadata] Llamando con path:", path);
-      const metadata = await extractMetadata(path);
+      const metadata = await extractMetadata({ filePath: path });
       console.log("[extractMetadata] Resultado:", JSON.stringify(metadata, null, 2));
       if (metadata.title) {
         setTitle(metadata.title);

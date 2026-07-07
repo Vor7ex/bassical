@@ -1,6 +1,5 @@
 use std::fs::File;
 use std::path::Path;
-use symphonia::core::audio::{Audio, GenericAudioBufferRef};
 use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::MediaSourceStream;
@@ -186,8 +185,11 @@ impl StreamingDecoder {
             return;
         }
 
-        if let Ok(GenericAudioBufferRef::F32(buf)) = self.decoder.decode(packet) {
-            copy_f32_samples(buf, samples);
+        if let Ok(buf) = self.decoder.decode(packet) {
+            let count = buf.frames() * buf.num_planes();
+            let offset = samples.len();
+            samples.resize(offset + count, 0.0);
+            buf.copy_to_slice_interleaved(&mut samples[offset..]);
         }
     }
 
@@ -197,18 +199,6 @@ impl StreamingDecoder {
 
     pub fn channels(&self) -> usize {
         self.channels
-    }
-}
-
-#[allow(clippy::needless_range_loop)]
-fn copy_f32_samples(buf: &symphonia::core::audio::AudioBuffer<f32>, samples: &mut Vec<f32>) {
-    let planes: Vec<&[f32]> = buf.iter_planes().collect();
-    let num_frames = buf.frames();
-    let num_channels = planes.len();
-    for frame_idx in 0..num_frames {
-        for ch in 0..num_channels {
-            samples.push(planes[ch][frame_idx]);
-        }
     }
 }
 

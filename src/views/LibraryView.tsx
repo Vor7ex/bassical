@@ -155,7 +155,6 @@ export function LibraryView({ onOpenSong }: LibraryViewProps) {
     <div className="flex flex-col h-full" onKeyDown={handleKeyDown} tabIndex={0}>
       <LibraryToolbar
         selectedSong={selectedSong}
-        onAddSong={() => setShowAddDialog(true)}
         onEditSong={handleEditSong}
         onOpenSong={() => selectedSong && onOpenSong?.(selectedSong)}
       />

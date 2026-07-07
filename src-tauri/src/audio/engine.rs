@@ -10,6 +10,8 @@ use std::time::Duration;
 use super::buffer_playback::FullBufferPlayback;
 use super::cache::{ActiveDecode, AudioCache, CachedAudio};
 use super::decoder::{probe_file, AudioMetadata, StreamingDecoder};
+use super::metronome::MetronomeState;
+use crate::calibration::CalibrationState;
 
 const PEAK_BINS: usize = 2000;
 const RING_BUFFER_SECONDS: usize = 2;
@@ -103,11 +105,14 @@ struct PlaybackState {
     position: AtomicU64,
     is_playing: AtomicBool,
     speed: AtomicU64,
+    song_volume: AtomicU64,
     device_rate: f64,
     streaming: Mutex<Option<Arc<StreamingState>>>,
     playback: Mutex<Option<Arc<StreamingState>>>,
     full_buffer: Mutex<Option<Arc<FullBufferPlayback>>>,
     current_path: Mutex<String>,
+    calib: Arc<CalibrationState>,
+    metronome: Arc<MetronomeState>,
 }
 
 pub struct AudioPlaybackInfo {
@@ -125,23 +130,48 @@ pub struct AudioEngine {
 unsafe impl Send for AudioEngine {}
 
 impl AudioEngine {
-    pub fn new(cache: Arc<AudioCache>) -> Self {
+    pub fn new(
+        cache: Arc<AudioCache>,
+        calib: Arc<CalibrationState>,
+        metronome: Arc<MetronomeState>,
+    ) -> Self {
         let host = cpal::default_host();
-        let device_rate = host
-            .default_output_device()
-            .and_then(|d| d.default_output_config().ok())
-            .map(|c| c.sample_rate().0 as f64)
-            .unwrap_or(48000.0);
+        let device = host.default_output_device();
+        let supported_config = device.as_ref().and_then(|d| d.default_output_config().ok());
+
+        let (device_rate, _channels) = supported_config
+            .as_ref()
+            .map(|c| (c.sample_rate().0 as f64, c.channels() as usize))
+            .unwrap_or((48000.0, 2));
+
+        metronome.reconfigure(device_rate as u32, _channels);
+
+        let os_latency_ms = supported_config
+            .as_ref()
+            .map(|c| {
+                let config: cpal::StreamConfig = c.config();
+                match config.buffer_size {
+                    cpal::BufferSize::Fixed(frames) => frames as f64 / device_rate * 1000.0,
+                    cpal::BufferSize::Default => 480.0 / device_rate * 1000.0,
+                }
+            })
+            .unwrap_or(10.0);
+
+        calib.set_device_rate(device_rate);
+        calib.set_os_latency_ms(os_latency_ms);
 
         let state = Arc::new(PlaybackState {
             position: AtomicU64::new(0),
             is_playing: AtomicBool::new(false),
             speed: AtomicU64::new(1.0f64.to_bits()),
+            song_volume: AtomicU64::new(1.0f64.to_bits()),
             device_rate,
             streaming: Mutex::new(None),
             playback: Mutex::new(None),
             full_buffer: Mutex::new(None),
             current_path: Mutex::new(String::new()),
+            calib,
+            metronome,
         });
 
         let mut engine = AudioEngine {
@@ -335,6 +365,13 @@ impl AudioEngine {
         Ok(())
     }
 
+    pub fn set_song_volume(&self, volume: f64) {
+        let clamped = volume.clamp(0.0, 1.0);
+        self.state
+            .song_volume
+            .store(clamped.to_bits(), Ordering::Relaxed);
+    }
+
     pub fn get_position_ms(&self) -> f64 {
         if let Some(ref fbp) = *self.state.full_buffer.lock().unwrap() {
             return fbp.get_position_ms();
@@ -407,6 +444,7 @@ impl AudioEngine {
 
     pub fn start_playback(&mut self, path: String) -> Result<AudioPlaybackInfo, String> {
         if let Some(cached) = self.cache.get(&path) {
+            let current_speed = f64::from_bits(self.state.speed.load(Ordering::Relaxed));
             self.clear_full_buffer();
             self.clear_playback();
             *self.state.current_path.lock().unwrap() = path.clone();
@@ -415,12 +453,11 @@ impl AudioEngine {
                 cached.samples.clone(),
                 self.state.device_rate as u32,
                 cached.channels as usize,
-                1.0,
+                current_speed,
             );
             fbp.set_path(path);
             *self.state.full_buffer.lock().unwrap() = Some(Arc::new(fbp));
             self.state.position.store(0, Ordering::Relaxed);
-            self.state.speed.store(1.0f64.to_bits(), Ordering::Relaxed);
             self.state.is_playing.store(true, Ordering::Relaxed);
 
             return Ok(AudioPlaybackInfo {
@@ -581,11 +618,32 @@ macro_rules! create_streaming_callback {
             }
 
             {
-                let fbp_guard = s.full_buffer.lock().unwrap();
-                if let Some(ref fbp) = *fbp_guard {
+                let fbp_opt = s.full_buffer.lock().unwrap().as_ref().cloned();
+                if let Some(ref fbp) = fbp_opt {
                     let ch = fbp.channels();
                     let frames_needed = data.len() / ch;
-                    let samples = fbp.feed_and_receive(frames_needed);
+
+                    let pos_ms_before = fbp.get_position_ms();
+                    let block_start_sample =
+                        (pos_ms_before / 1000.0 * s.device_rate).round() as u64;
+
+                    let mut samples = fbp.feed_and_receive(frames_needed, &s.calib);
+
+                    let song_vol = f64::from_bits(s.song_volume.load(Ordering::Relaxed));
+                    let balance = s.metronome.get_balance();
+                    let song_gain = (song_vol * balance) as f32;
+                    let click_gain = (song_vol * (1.0 - balance)) as f32;
+
+                    if (song_gain - 1.0).abs() > f32::EPSILON {
+                        for sample in samples.iter_mut() {
+                            *sample *= song_gain;
+                        }
+                    }
+
+                    let speed = f64::from_bits(s.speed.load(Ordering::Relaxed));
+                    s.metronome
+                        .mix_block(&mut samples, ch, block_start_sample, click_gain, speed);
+
                     for (i, sample) in data.iter_mut().enumerate() {
                         *sample = if i < samples.len() {
                             $convert(samples[i])
@@ -593,6 +651,13 @@ macro_rules! create_streaming_callback {
                             $zero
                         };
                     }
+                    let pos_ms = fbp.get_position_ms();
+                    s.calib.set_is_full_buffer(true);
+                    s.calib.set_output_buffer_frames(frames_needed as u64);
+                    s.calib.set_ring_buffer_samples(0);
+                    s.calib.set_position_ms(pos_ms);
+                    s.calib.set_speed(f64::from_bits(fbp.tempo_atomic()));
+                    s.calib.set_is_playing(true);
                     if fbp.is_done() {
                         s.is_playing.store(false, Ordering::Relaxed);
                     }
@@ -622,30 +687,70 @@ macro_rules! create_streaming_callback {
                 return;
             }
 
-            let mut consumer = streaming.consumer.lock().unwrap();
-
-            for sample in data.iter_mut() {
-                *sample = match consumer.try_pop() {
-                    Some(s) => $convert(s),
-                    None => {
-                        if streaming.is_done.load(Ordering::Acquire) {
-                            s.is_playing.store(false, Ordering::Relaxed);
+            let ch_stream = streaming.channels();
+            let mut samples = vec![0.0f32; data.len()];
+            {
+                let mut consumer = streaming.consumer.lock().unwrap();
+                for sample in samples.iter_mut() {
+                    *sample = match consumer.try_pop() {
+                        Some(s) => s,
+                        None => {
+                            if streaming.is_done.load(Ordering::Acquire) {
+                                s.is_playing.store(false, Ordering::Relaxed);
+                            }
+                            0.0
                         }
-                        $zero
-                    }
-                };
+                    };
+                }
             }
 
-            let ch = streaming.channels() as f64;
+            let ch = ch_stream as f64;
             let rate = streaming.metadata.sample_rate as f64;
             let frames_out = data.len() as f64 / ch;
             let src_step = rate / s.device_rate;
             let speed = f64::from_bits(s.speed.load(Ordering::Relaxed));
             let current_pos = s.position.load(Ordering::Relaxed) as f64;
             let src_frames = current_pos / ch;
+
+            let pos_ms_before = src_frames / rate * 1000.0;
+            let block_start_sample = (pos_ms_before / 1000.0 * s.device_rate).round() as u64;
+
             let new_src_frames = src_frames + frames_out * src_step * speed;
             s.position
                 .store((new_src_frames * ch) as u64, Ordering::Relaxed);
+
+            let song_vol = f64::from_bits(s.song_volume.load(Ordering::Relaxed));
+            let balance = s.metronome.get_balance();
+            let song_gain = (song_vol * balance) as f32;
+            let click_gain = (song_vol * (1.0 - balance)) as f32;
+
+            if (song_gain - 1.0).abs() > f32::EPSILON {
+                for sample in samples.iter_mut() {
+                    *sample *= song_gain;
+                }
+            }
+
+            s.metronome.mix_block(
+                &mut samples,
+                ch_stream,
+                block_start_sample,
+                click_gain,
+                speed,
+            );
+
+            for (i, sample) in data.iter_mut().enumerate() {
+                *sample = $convert(samples[i]);
+            }
+
+            let ring_samples = 0u64;
+            let pos_ms = new_src_frames / rate * 1000.0;
+            s.calib.set_is_full_buffer(false);
+            s.calib.set_soundtouch_unprocessed(0);
+            s.calib.set_output_buffer_frames(frames_out as u64);
+            s.calib.set_ring_buffer_samples(ring_samples);
+            s.calib.set_position_ms(pos_ms);
+            s.calib.set_speed(speed);
+            s.calib.set_is_playing(true);
         }
     }};
 }
@@ -664,7 +769,10 @@ fn create_i16_callback(
 
 impl Default for AudioEngine {
     fn default() -> Self {
-        Self::new(Arc::new(AudioCache::new()))
+        let cache = Arc::new(AudioCache::new());
+        let calib = Arc::new(CalibrationState::new());
+        let metronome = Arc::new(MetronomeState::new(48000));
+        Self::new(cache, calib, metronome)
     }
 }
 

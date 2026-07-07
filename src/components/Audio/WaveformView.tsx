@@ -1,10 +1,17 @@
 import { useEffect, useRef, useCallback } from "react";
+import type { BeatLine } from "@/lib/beatGrid";
 
 interface WaveformViewProps {
   peaks: number[];
   currentPositionMs: number;
+  viewportStartMs: number;
+  viewportEndMs: number;
   durationMs: number;
   onSeek: (positionMs: number) => void;
+  onZoom?: (factor: number, centerMs: number) => void;
+  onPan?: (deltaMs: number) => void;
+  beatGrid?: BeatLine[];
+  children?: React.ReactNode;
   height?: number;
 }
 
@@ -15,20 +22,30 @@ interface CanvasCtx {
   dpr: number;
   peaks: number[];
   positionMs: number;
-  durationMs: number;
+  viewportStartMs: number;
+  viewportEndMs: number;
+  beatGrid?: BeatLine[];
 }
 
+const DRAG_THRESHOLD_PX = 4;
+const ZOOM_FACTOR = 1.25;
+const BEAT_FONT = '9px "Inter", -apple-system, "Segoe UI", system-ui, sans-serif';
+
 function drawBars(c: CanvasCtx) {
-  const h = c.height * c.dpr;
+  const h = c.height;
   const barWidth = 2 * c.dpr;
   const gap = 1 * c.dpr;
   const totalBarWidth = barWidth + gap;
   const numBars = Math.floor(c.width / totalBarWidth);
   const centerY = h / 2;
+  const peakCount = c.peaks.length;
 
   c.ctx.fillStyle = "oklch(0.45 0.10 155)";
-  for (let i = 0; i < numBars && i < c.peaks.length; i++) {
-    const peakIdx = Math.floor((i / numBars) * c.peaks.length);
+  for (let i = 0; i < numBars; i++) {
+    const peakIdx = Math.min(
+      Math.floor((i / numBars) * peakCount),
+      peakCount - 1,
+    );
     const amplitude = c.peaks[peakIdx] * (h * 0.45);
     const x = i * totalBarWidth;
     c.ctx.fillRect(x, centerY - amplitude, barWidth, amplitude);
@@ -37,16 +54,65 @@ function drawBars(c: CanvasCtx) {
 }
 
 function drawPlayhead(c: CanvasCtx) {
-  const h = c.height * c.dpr;
-  const playheadX =
-    c.durationMs > 0 ? (c.positionMs / c.durationMs) * c.width : 0;
+  const h = c.height;
+  const span = c.viewportEndMs - c.viewportStartMs;
+  if (span <= 0) return;
+
+  if (c.positionMs < c.viewportStartMs || c.positionMs > c.viewportEndMs) {
+    return;
+  }
+
+  const ratio = (c.positionMs - c.viewportStartMs) / span;
+  const playheadX = ratio * c.width;
   c.ctx.fillStyle = "oklch(0.72 0.18 155)";
   c.ctx.fillRect(playheadX - 1 * c.dpr, 0, 2 * c.dpr, h);
+}
+
+function drawBeatGrid(c: CanvasCtx) {
+  const grid = c.beatGrid;
+  if (!grid || grid.length === 0) return;
+
+  const h = c.height;
+  const span = c.viewportEndMs - c.viewportStartMs;
+  if (span <= 0) return;
+
+  const dpr = c.dpr;
+  const labelColor = "oklch(0.35 0.04 155)";
+  const beatColor = "oklch(0.25 0.015 160)";
+  const downbeatColor = "oklch(0.35 0.02 160)";
+
+  c.ctx.save();
+  c.ctx.font = BEAT_FONT;
+  c.ctx.textBaseline = "bottom";
+  c.ctx.textAlign = "center";
+
+  for (const beat of grid) {
+    const ratio = (beat.ms - c.viewportStartMs) / span;
+    const x = ratio * c.width;
+
+    if (beat.isDownbeat) {
+      c.ctx.fillStyle = downbeatColor;
+      c.ctx.fillRect(x, 0, 1 * dpr, h);
+
+      c.ctx.fillStyle = labelColor;
+      c.ctx.fillText(
+        `${beat.barNumber}`,
+        x,
+        h - 2 * dpr,
+      );
+    } else {
+      c.ctx.fillStyle = beatColor;
+      c.ctx.fillRect(x, 0, 0.5 * dpr, h);
+    }
+  }
+
+  c.ctx.restore();
 }
 
 function renderFrame(c: CanvasCtx) {
   c.ctx.clearRect(0, 0, c.width, c.height);
   if (c.peaks.length === 0) return;
+  drawBeatGrid(c);
   drawBars(c);
   drawPlayhead(c);
 }
@@ -54,14 +120,34 @@ function renderFrame(c: CanvasCtx) {
 export function WaveformView({
   peaks,
   currentPositionMs,
+  viewportStartMs,
+  viewportEndMs,
   durationMs,
   onSeek,
+  onZoom,
+  onPan,
+  beatGrid,
+  children,
   height = 200,
 }: WaveformViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const peaksRef = useRef(peaks);
   peaksRef.current = peaks;
+  const beatGridRef = useRef(beatGrid);
+  beatGridRef.current = beatGrid;
+
+  const dragStateRef = useRef<{
+    startX: number;
+    lastX: number;
+    dragged: boolean;
+    viewportStartMs: number;
+  } | null>(null);
+
+  const onZoomRef = useRef(onZoom);
+  onZoomRef.current = onZoom;
+  const viewportRef = useRef({ start: viewportStartMs, end: viewportEndMs, duration: durationMs });
+  viewportRef.current = { start: viewportStartMs, end: viewportEndMs, duration: durationMs };
 
   const draw = useCallback(
     (posMs: number) => {
@@ -70,18 +156,19 @@ export function WaveformView({
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       const dpr = window.devicePixelRatio || 1;
-      const c: CanvasCtx = {
+      renderFrame({
         ctx,
         width: canvas.width,
-        height,
+        height: canvas.height,
         dpr,
         peaks: peaksRef.current,
         positionMs: posMs,
-        durationMs,
-      };
-      renderFrame(c);
+        viewportStartMs,
+        viewportEndMs,
+        beatGrid: beatGridRef.current,
+      });
     },
-    [height, durationMs],
+    [height, viewportStartMs, viewportEndMs],
   );
 
   useEffect(() => {
@@ -108,21 +195,97 @@ export function WaveformView({
 
   useEffect(() => {
     draw(currentPositionMs);
-  }, [currentPositionMs, peaks, draw]);
+  }, [currentPositionMs, peaks, beatGrid, draw]);
 
-  function handleClick(e: React.MouseEvent<HTMLCanvasElement>) {
+  const pixelToMs = useCallback((clientX: number): number => {
     const canvas = canvasRef.current;
-    if (!canvas || durationMs <= 0) return;
+    if (!canvas) return 0;
     const rect = canvas.getBoundingClientRect();
-    onSeek(((e.clientX - rect.left) / rect.width) * durationMs);
+    const ratio = (clientX - rect.left) / rect.width;
+    const vp = viewportRef.current;
+    return vp.start + ratio * (vp.end - vp.start);
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const wheelHandler = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      const zoomFn = onZoomRef.current;
+      if (!zoomFn) return;
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const vp = viewportRef.current;
+      const ratio = (e.clientX - rect.left) / rect.width;
+      const centerMs = vp.start + ratio * (vp.end - vp.start);
+      const factor = e.deltaY < 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR;
+      zoomFn(factor, centerMs);
+    };
+
+    canvas.addEventListener("wheel", wheelHandler, { passive: false });
+    return () => canvas.removeEventListener("wheel", wheelHandler);
+  }, []);
+
+  function handleMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
+    dragStateRef.current = {
+      startX: e.clientX,
+      lastX: e.clientX,
+      dragged: false,
+      viewportStartMs,
+    };
+  }
+
+  function handleMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
+    const state = dragStateRef.current;
+    if (!state) return;
+    const delta = e.clientX - state.startX;
+    if (!state.dragged && Math.abs(delta) > DRAG_THRESHOLD_PX) {
+      state.dragged = true;
+    }
+    if (state.dragged && onPan) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const vp = viewportRef.current;
+      const span = vp.end - vp.start;
+      const panDeltaMs = -((e.clientX - state.lastX) / rect.width) * span;
+      onPan(panDeltaMs);
+      state.lastX = e.clientX;
+    }
+  }
+
+  function handleMouseUp(e: React.MouseEvent<HTMLCanvasElement>) {
+    const state = dragStateRef.current;
+    dragStateRef.current = null;
+    if (!state || !state.dragged) {
+      const ms = pixelToMs(e.clientX);
+      onSeek(Math.max(0, Math.min(durationMs, ms)));
+    }
+  }
+
+  function handleMouseLeave() {
+    dragStateRef.current = null;
   }
 
   return (
     <div
       ref={containerRef}
-      className="relative w-full bg-bg-input rounded-sm overflow-hidden cursor-crosshair"
+      className="relative w-full bg-bg-input cursor-crosshair select-none flex-1 min-h-0"
     >
-      <canvas ref={canvasRef} onClick={handleClick} className="w-full block" />
+      <div className="absolute inset-0 rounded-sm overflow-hidden">
+        <canvas
+          ref={canvasRef}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseLeave}
+          className="w-full block h-full"
+        />
+      </div>
+      <div className="absolute inset-0 pointer-events-none">
+        {children}
+      </div>
     </div>
   );
 }
