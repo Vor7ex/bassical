@@ -18,3 +18,11 @@ export async function setMetronomeGrid(
     durationMs,
   });
 }
+
+export async function setMetronomeBalance(balance: number): Promise<void> {
+  return await invoke<void>("set_metronome_balance", { balance });
+}
+
+export async function getMetronomeBalance(): Promise<number> {
+  return await invoke<number>("get_metronome_balance");
+}

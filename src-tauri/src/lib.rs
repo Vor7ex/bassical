@@ -60,6 +60,8 @@ pub fn run() {
             commands::metronome::toggle_metronome,
             commands::metronome::get_metronome_state,
             commands::metronome::set_metronome_grid,
+            commands::metronome::set_metronome_balance,
+            commands::metronome::get_metronome_balance,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

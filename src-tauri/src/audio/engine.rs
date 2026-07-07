@@ -144,6 +144,8 @@ impl AudioEngine {
             .map(|c| (c.sample_rate().0 as f64, c.channels() as usize))
             .unwrap_or((48000.0, 2));
 
+        metronome.reconfigure(device_rate as u32, _channels);
+
         let os_latency_ms = supported_config
             .as_ref()
             .map(|c| {
@@ -620,18 +622,26 @@ macro_rules! create_streaming_callback {
                 if let Some(ref fbp) = fbp_opt {
                     let ch = fbp.channels();
                     let frames_needed = data.len() / ch;
+
+                    let pos_ms_before = fbp.get_position_ms();
+                    let block_start_sample =
+                        (pos_ms_before / 1000.0 * s.device_rate).round() as u64;
+
                     let mut samples = fbp.feed_and_receive(frames_needed, &s.calib);
 
-                    let song_vol = f64::from_bits(s.song_volume.load(Ordering::Relaxed)) as f32;
-                    if (song_vol - 1.0).abs() > f32::EPSILON {
+                    let song_vol = f64::from_bits(s.song_volume.load(Ordering::Relaxed));
+                    let balance = s.metronome.get_balance();
+                    let song_gain = (song_vol * balance) as f32;
+                    let click_gain = (song_vol * (1.0 - balance)) as f32;
+
+                    if (song_gain - 1.0).abs() > f32::EPSILON {
                         for sample in samples.iter_mut() {
-                            *sample *= song_vol;
+                            *sample *= song_gain;
                         }
                     }
 
-                    let pos_ms = fbp.get_position_ms();
-                    let current_sample = (pos_ms / 1000.0 * s.device_rate).round() as u64;
-                    s.metronome.mix_enabled(&mut samples, ch, current_sample);
+                    s.metronome
+                        .mix_block(&mut samples, ch, block_start_sample, click_gain);
 
                     for (i, sample) in data.iter_mut().enumerate() {
                         *sample = if i < samples.len() {
@@ -640,6 +650,7 @@ macro_rules! create_streaming_callback {
                             $zero
                         };
                     }
+                    let pos_ms = fbp.get_position_ms();
                     s.calib.set_is_full_buffer(true);
                     s.calib.set_output_buffer_frames(frames_needed as u64);
                     s.calib.set_ring_buffer_samples(0);
@@ -692,13 +703,6 @@ macro_rules! create_streaming_callback {
                 }
             }
 
-            let song_vol = f64::from_bits(s.song_volume.load(Ordering::Relaxed)) as f32;
-            if (song_vol - 1.0).abs() > f32::EPSILON {
-                for sample in samples.iter_mut() {
-                    *sample *= song_vol;
-                }
-            }
-
             let ch = ch_stream as f64;
             let rate = streaming.metadata.sample_rate as f64;
             let frames_out = data.len() as f64 / ch;
@@ -706,20 +710,34 @@ macro_rules! create_streaming_callback {
             let speed = f64::from_bits(s.speed.load(Ordering::Relaxed));
             let current_pos = s.position.load(Ordering::Relaxed) as f64;
             let src_frames = current_pos / ch;
+
+            let pos_ms_before = src_frames / rate * 1000.0;
+            let block_start_sample = (pos_ms_before / 1000.0 * s.device_rate).round() as u64;
+
             let new_src_frames = src_frames + frames_out * src_step * speed;
             s.position
                 .store((new_src_frames * ch) as u64, Ordering::Relaxed);
 
-            let pos_ms = new_src_frames / rate * 1000.0;
-            let current_sample = (pos_ms / 1000.0 * s.device_rate).round() as u64;
+            let song_vol = f64::from_bits(s.song_volume.load(Ordering::Relaxed));
+            let balance = s.metronome.get_balance();
+            let song_gain = (song_vol * balance) as f32;
+            let click_gain = (song_vol * (1.0 - balance)) as f32;
+
+            if (song_gain - 1.0).abs() > f32::EPSILON {
+                for sample in samples.iter_mut() {
+                    *sample *= song_gain;
+                }
+            }
+
             s.metronome
-                .mix_enabled(&mut samples, ch_stream, current_sample);
+                .mix_block(&mut samples, ch_stream, block_start_sample, click_gain);
 
             for (i, sample) in data.iter_mut().enumerate() {
                 *sample = $convert(samples[i]);
             }
 
             let ring_samples = 0u64;
+            let pos_ms = new_src_frames / rate * 1000.0;
             s.calib.set_is_full_buffer(false);
             s.calib.set_soundtouch_unprocessed(0);
             s.calib.set_output_buffer_frames(frames_out as u64);

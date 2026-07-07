@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import type { Song } from "@/lib/types";
 import { usePracticePlayback } from "@/lib/usePracticePlayback";
 import { useViewportPeaks } from "@/lib/useViewportPeaks";
@@ -6,7 +6,6 @@ import { computeBeatGrid } from "@/lib/beatGrid";
 import { useCalibrationStore, useMetronomeStore } from "@/lib/store";
 import { useTapCalibration } from "@/lib/useTapCalibration";
 import { setMetronomeGrid } from "@/lib/metronome";
-import { setSongVolume } from "@/lib/audio";
 import { WaveformView, PlaybackControls, TimingPointMarker, TimingPointPanel } from "@/components/Audio";
 
 interface AudioViewProps {
@@ -469,12 +468,15 @@ export function AudioView({ song, onBack }: AudioViewProps) {
 
   const metronomeOn = useMetronomeStore((s) => s.enabled);
   const toggleMetronome = useMetronomeStore((s) => s.toggle);
+  const balance = useMetronomeStore((s) => s.balance);
+  const setBalance = useMetronomeStore((s) => s.setBalance);
 
-  const [volume, setVolume] = useState(1.0);
-  const handleVolumeChange = useCallback((v: number) => {
-    setVolume(v);
-    setSongVolume(v).catch(console.error);
-  }, []);
+  const handleBalanceChange = useCallback(
+    (v: number) => {
+      setBalance(v).catch(console.error);
+    },
+    [setBalance],
+  );
 
   const {
     calibratingTpIndex,
@@ -525,19 +527,27 @@ export function AudioView({ song, onBack }: AudioViewProps) {
           )}
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <span className="text-caption text-text-tertiary w-4 text-right">
-              {Math.round(volume * 100)}
+          <div className="flex items-center gap-1.5" title="Balance canción / metrónomo">
+            <span className="text-caption text-text-tertiary" aria-hidden="true">
+              ♪
             </span>
             <input
               type="range"
-              className="volume-slider w-20"
+              className="balance-slider w-24"
               min={0}
               max={100}
-              value={Math.round(volume * 100)}
-              onChange={(e) => handleVolumeChange(parseInt(e.target.value, 10) / 100)}
-              aria-label="Volumen de la canción"
+              value={Math.round(balance * 100)}
+              onChange={(e) =>
+                handleBalanceChange(parseInt(e.target.value, 10) / 100)
+              }
+              aria-label="Balance canción / metrónomo"
             />
+            <span className="text-caption text-text-tertiary" aria-hidden="true">
+              ⏱
+            </span>
+            <span className="text-mono text-text-tertiary w-12 text-center">
+              {Math.round(balance * 100)}/{Math.round((1 - balance) * 100)}
+            </span>
           </div>
           <span className="text-mono text-text-tertiary text-caption">
           {audioState

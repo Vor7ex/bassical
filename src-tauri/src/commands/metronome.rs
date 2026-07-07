@@ -29,3 +29,17 @@ pub fn set_metronome_grid(
     metro.0.set_grid(&timing_points, total_frames);
     Ok(())
 }
+
+#[tauri::command]
+pub fn set_metronome_balance(
+    balance: f64,
+    metro: State<MetronomeStateWrapper>,
+) -> Result<(), String> {
+    metro.0.set_balance(balance);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_metronome_balance(metro: State<MetronomeStateWrapper>) -> Result<f64, String> {
+    Ok(metro.0.get_balance())
+}
