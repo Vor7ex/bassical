@@ -376,9 +376,9 @@ impl MetronomeState {
                 break;
             }
             let click = if beat.is_downbeat {
-                bank.hi.clone()
-            } else {
                 bank.lo.clone()
+            } else {
+                bank.hi.clone()
             };
             if click.is_empty() {
                 continue;
