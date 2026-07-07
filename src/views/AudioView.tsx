@@ -272,7 +272,7 @@ function WaveformArea({
         >
           {timingPoints.map((tp, idx) => (
             <TimingPointMarker
-              key={`${idx}-${tp.offsetMs}`}
+              key={`tp-${idx}`}
               tp={tp}
               index={idx}
               isSelected={selectedTpIndex === idx}

@@ -173,7 +173,7 @@ export function TimingPointPanel({
         ) : (
           timingPoints.map((tp, idx) => (
             <TimingPointItem
-              key={`${idx}-${tp.offsetMs}`}
+              key={`tp-${idx}`}
               tp={tp}
               index={idx}
               isSelected={selectedIndex === idx}
