@@ -452,12 +452,12 @@ function OffsetStepper({
     step(sign);
     holdTimeoutRef.current = setTimeout(() => {
       intervalRef.current = setInterval(() => {
-        const delta = signRef.current * 100;
+        const delta = signRef.current;
         const v = +(valueRef.current + delta).toFixed(0);
         if (v >= 0 && v <= maxMs) {
           onChange(v);
         }
-      }, 100);
+      }, 10);
     }, 1000);
   };
 
