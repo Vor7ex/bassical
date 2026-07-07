@@ -447,6 +447,9 @@ function useMetronomeSync(
 
   useEffect(() => {
     syncMetronome().catch(console.error);
+    return () => {
+      setMetronomeGrid([], 0).catch(() => {});
+    };
   }, [syncMetronome]);
 }
 
@@ -494,6 +497,16 @@ export function AudioView({ song, onBack }: AudioViewProps) {
   useCalibrationLifecycle(song, audioState);
   useAutoScrollViewport(isPlaying, currentPositionMs, !!audioState);
   useMetronomeSync(songId, timingPoints, audioState?.durationMs ?? 0);
+
+  const metronomeWasOnRef = useRef(metronomeOn);
+  metronomeWasOnRef.current = metronomeOn;
+  useEffect(() => {
+    return () => {
+      if (metronomeWasOnRef.current) {
+        toggleMetronome().catch(() => {});
+      }
+    };
+  }, [toggleMetronome]);
 
   usePlaybackKeyboard({
     isPlaying,
