@@ -3,9 +3,11 @@ import type { Song } from "@/lib/types";
 import { usePracticePlayback } from "@/lib/usePracticePlayback";
 import { useViewportPeaks } from "@/lib/useViewportPeaks";
 import { computeBeatGrid } from "@/lib/beatGrid";
-import { useCalibrationStore, useMetronomeStore } from "@/lib/store";
+import { useCalibrationStore, useMetronomeStore, useSessionStore } from "@/lib/store";
 import { useTapCalibration } from "@/lib/useTapCalibration";
 import { setMetronomeGrid } from "@/lib/metronome";
+import { setSongVolume } from "@/lib/audio";
+import { invoke } from "@tauri-apps/api/core";
 import { WaveformView, PlaybackControls, TimingPointMarker, TimingPointPanel } from "@/components/Audio";
 
 interface AudioViewProps {
@@ -474,6 +476,8 @@ export function AudioView({ song, onBack }: AudioViewProps) {
   const balance = useMetronomeStore((s) => s.balance);
   const setBalance = useMetronomeStore((s) => s.setBalance);
 
+  const volume = useSessionStore((s) => s.volume);
+
   const handleBalanceChange = useCallback(
     (v: number) => {
       setBalance(v).catch(console.error);
@@ -498,13 +502,19 @@ export function AudioView({ song, onBack }: AudioViewProps) {
   useAutoScrollViewport(isPlaying, currentPositionMs, !!audioState);
   useMetronomeSync(songId, timingPoints, audioState?.durationMs ?? 0);
 
+  const libraryVolumeRef = useRef(volume);
+  libraryVolumeRef.current = volume;
   const metronomeWasOnRef = useRef(metronomeOn);
   metronomeWasOnRef.current = metronomeOn;
+
   useEffect(() => {
+    setSongVolume(1.0).catch(() => {});
     return () => {
       if (metronomeWasOnRef.current) {
         toggleMetronome().catch(() => {});
       }
+      invoke("set_metronome_balance", { balance: 1.0 }).catch(() => {});
+      setSongVolume(libraryVolumeRef.current).catch(() => {});
     };
   }, [toggleMetronome]);
 

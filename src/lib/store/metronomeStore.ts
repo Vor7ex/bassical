@@ -2,7 +2,6 @@ import { create } from "zustand";
 import {
   toggleMetronome,
   getMetronomeState,
-  getMetronomeBalance,
   setMetronomeBalance,
 } from "@/lib/metronome";
 
@@ -15,7 +14,7 @@ interface MetronomeStore {
   sync: () => Promise<void>;
 }
 
-export const useMetronomeStore = create<MetronomeStore>((set) => ({
+export const useMetronomeStore = create<MetronomeStore>((set, get) => ({
   enabled: false,
   balance: 0.7,
 
@@ -33,10 +32,8 @@ export const useMetronomeStore = create<MetronomeStore>((set) => ({
   },
 
   sync: async () => {
-    const [enabled, balance] = await Promise.all([
-      getMetronomeState(),
-      getMetronomeBalance(),
-    ]);
-    set({ enabled, balance });
+    const enabled = await getMetronomeState();
+    await setMetronomeBalance(get().balance);
+    set({ enabled });
   },
 }));

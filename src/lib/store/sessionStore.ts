@@ -14,6 +14,7 @@ interface SessionState {
   currentPositionMs: number;
   audioState: AudioState | null;
   decodeProgress: number;
+  volume: number;
 
   queue: string[];
 
@@ -24,6 +25,7 @@ interface SessionState {
   setAudioState: (info: { durationMs: number; sampleRate: number; channels: number; peaks: number[] } | null) => void;
   updatePeaks: (peaks: number[]) => void;
   setDecodeProgress: (progress: number) => void;
+  setVolume: (volume: number) => void;
   setQueue: (queue: string[]) => void;
   playNext: () => void;
   playPrevious: () => void;
@@ -37,6 +39,7 @@ const INITIAL_STATE = {
   currentPositionMs: 0,
   audioState: null,
   decodeProgress: 1.0,
+  volume: 1.0,
   queue: [],
 };
 
@@ -65,6 +68,7 @@ export const useSessionStore = create<SessionState>((set) => ({
         : null,
     })),
   setDecodeProgress: (progress) => set({ decodeProgress: progress }),
+  setVolume: (volume) => set({ volume: Math.max(0, Math.min(1, volume)) }),
   setQueue: (queue) => set({ queue }),
   playNext: () =>
     set((s) => {
