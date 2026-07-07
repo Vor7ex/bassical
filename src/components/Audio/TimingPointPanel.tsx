@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { TimingPoint, TimeSignature } from "@/lib/types";
 import { TapCalibrationPanel } from "./TapCalibrationPanel";
 
@@ -271,6 +271,12 @@ function TimingPointItem({
             const v = parseFloat(text);
             if (!isNaN(v)) onUpdate({ bpm: v });
           }}
+          endSlot={
+            <BpmStepper
+              value={tp.bpm}
+              onChange={(v) => onUpdate({ bpm: v })}
+            />
+          }
         />
         <TpField
           label="Offset"
@@ -280,6 +286,13 @@ function TimingPointItem({
             const v = parseFloat(text);
             if (!isNaN(v)) onUpdate({ offsetMs: v });
           }}
+          endSlot={
+            <OffsetStepper
+              value={tp.offsetMs}
+              maxMs={durationMs}
+              onChange={(v) => onUpdate({ offsetMs: v })}
+            />
+          }
         />
       </div>
 
@@ -311,11 +324,13 @@ function TpField({
   initialText,
   isValid,
   onCommit,
+  endSlot,
 }: {
   label: string;
   initialText: string;
   isValid: boolean;
   onCommit: (text: string) => void;
+  endSlot?: React.ReactNode;
 }) {
   const [text, setText] = useState(initialText);
 
@@ -336,18 +351,142 @@ function TpField({
       <span className="text-xs text-text-tertiary uppercase tracking-wide">
         {label}
       </span>
-      <input
-        type="text"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={handleBlur}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") handleBlur();
-        }}
-        className={`bg-bg-input border text-text-primary h-7 px-2 text-caption font-mono text-right ${
-          isValid ? "border-border-subtle" : "border-danger-border"
-        }`}
-      />
+      <div className="flex items-stretch gap-0.5">
+        <input
+          type="text"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={handleBlur}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleBlur();
+          }}
+          className={`bg-bg-input border text-text-primary h-7 px-2 text-caption font-mono text-right flex-1 min-w-0 ${
+            isValid ? "border-border-subtle" : "border-danger-border"
+          }`}
+        />
+        {endSlot}
+      </div>
     </label>
+  );
+}
+
+function BpmStepper({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const apply = (delta: number) => {
+    const next = Math.max(20, Math.min(400, +(value + delta).toFixed(2)));
+    onChange(next);
+  };
+
+  return (
+    <div className="flex flex-col w-7 h-7 text-[8px] leading-none shrink-0">
+      <button
+        onClick={() => apply(0.01)}
+        onMouseDown={(e) => e.preventDefault()}
+        className="h-[15%] flex items-center justify-center bg-bg-input border border-border-subtle text-text-tertiary hover:text-text-primary hover:border-border-strong cursor-pointer transition-colors"
+      >
+        +
+      </button>
+      <button
+        onClick={() => apply(0.1)}
+        onMouseDown={(e) => e.preventDefault()}
+        className="h-[35%] flex items-center justify-center bg-bg-input border border-border-subtle text-text-tertiary hover:text-text-primary hover:border-border-strong cursor-pointer transition-colors border-t-0"
+      >
+        +
+      </button>
+      <button
+        onClick={() => apply(-0.1)}
+        onMouseDown={(e) => e.preventDefault()}
+        className="h-[35%] flex items-center justify-center bg-bg-input border border-border-subtle text-text-tertiary hover:text-text-primary hover:border-border-strong cursor-pointer transition-colors border-t-0"
+      >
+        −
+      </button>
+      <button
+        onClick={() => apply(-0.01)}
+        onMouseDown={(e) => e.preventDefault()}
+        className="h-[15%] flex items-center justify-center bg-bg-input border border-border-subtle text-text-tertiary hover:text-text-primary hover:border-border-strong cursor-pointer transition-colors border-t-0"
+      >
+        −
+      </button>
+    </div>
+  );
+}
+
+function OffsetStepper({
+  value,
+  maxMs,
+  onChange,
+}: {
+  value: number;
+  maxMs: number;
+  onChange: (v: number) => void;
+}) {
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const signRef = useRef(0);
+  const valueRef = useRef(value);
+  valueRef.current = value;
+
+  const stopHold = useCallback(() => {
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => stopHold();
+  }, [stopHold]);
+
+  const step = useCallback(
+    (delta: number) => {
+      onChange(+(value + delta).toFixed(0));
+    },
+    [value, onChange],
+  );
+
+  const startHold = (sign: 1 | -1) => () => {
+    signRef.current = sign;
+    step(sign);
+    holdTimeoutRef.current = setTimeout(() => {
+      intervalRef.current = setInterval(() => {
+        const delta = signRef.current * 100;
+        const v = +(valueRef.current + delta).toFixed(0);
+        if (v >= 0 && v <= maxMs) {
+          onChange(v);
+        }
+      }, 100);
+    }, 1000);
+  };
+
+  const btn = "h-1/2 flex items-center justify-center bg-bg-input border border-border-subtle text-text-tertiary hover:text-text-primary hover:border-border-strong cursor-pointer transition-colors text-[8px] leading-none";
+
+  return (
+    <div className="flex flex-col w-7 h-7 text-[8px] leading-none shrink-0">
+      <button
+        onMouseDown={(e) => {
+          e.preventDefault();
+          startHold(1)();
+        }}
+        onMouseUp={stopHold}
+        onMouseLeave={stopHold}
+        className={`${btn} rounded-b-none`}
+      >
+        +
+      </button>
+      <button
+        onMouseDown={(e) => {
+          e.preventDefault();
+          startHold(-1)();
+        }}
+        onMouseUp={stopHold}
+        onMouseLeave={stopHold}
+        className={`${btn} border-t-0 rounded-t-none`}
+      >
+        −
+      </button>
+    </div>
   );
 }
